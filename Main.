@@ -2049,137 +2049,154 @@ BuildUI = function()
         end
     })
 
-    AutoEquipCalculatedBestToggle = EquipBestSection:AddToggle("AutoEquipCalculatedBest", {
-        Title = "Auto Equip Calculated Best",
-        Default = false,
-        Callback = function(Value)
-            autoEquipCalculatedBestEnabled = Value
-            
-            -- Turn off the other toggle if this one is being enabled
-            if Value and autoEquipBestEnabled then
-                AutoEquipBestToggle:SetValue(false)
-            end
-            
-            if autoEquipCalculatedBestThread then
-                task.cancel(autoEquipCalculatedBestThread)
-                autoEquipCalculatedBestThread = nil
-            end
-            
-            if Value then
-                autoEquipCalculatedBestThread = task.spawn(function()
-                    local NetworkModule = require(ReplicatedStorage.Modules.Network)
-                    local ReplicationModule = require(ReplicatedStorage.Game.Replication)
-                    local SignalModule = require(ReplicatedStorage.Modules.Signal)
-                    local PetStatsTiers = require(ReplicatedStorage.Game.PetStats.Tiers)
-                    
-                    -- Constants
-                    local MAX_LEVEL = 50
-                    local LEVEL_FORMULA_DIVISOR = 199
-                    
-                    -- Get tier multiplier from the game's Tiers module
-                    local function getTierMultiplier(tier)
-                        if not tier or tier == "Normal" then
-                            return 1
-                        end
-                        
-                        if PetStatsTiers[tier] and PetStatsTiers[tier][1] then
-                            return PetStatsTiers[tier][1]
-                        end
-                        
+AutoEquipCalculatedBestToggle = EquipBestSection:AddToggle("AutoEquipCalculatedBest", {
+    Title = "Auto Equip Calculated Best",
+    Default = false,
+    Callback = function(Value)
+        autoEquipCalculatedBestEnabled = Value
+        
+        -- Turn off the other toggle if this one is being enabled
+        if Value and autoEquipBestEnabled then
+            AutoEquipBestToggle:SetValue(false)
+        end
+        
+        if autoEquipCalculatedBestThread then
+            task.cancel(autoEquipCalculatedBestThread)
+            autoEquipCalculatedBestThread = nil
+        end
+        
+        if Value then
+            autoEquipCalculatedBestThread = task.spawn(function()
+                local NetworkModule = require(ReplicatedStorage.Modules.Network)
+                local ReplicationModule = require(ReplicatedStorage.Game.Replication)
+                local SignalModule = require(ReplicatedStorage.Modules.Signal)
+                local PetStatsTiers = require(ReplicatedStorage.Game.PetStats.Tiers)
+                
+                -- Constants
+                local MAX_LEVEL = 50
+                local LEVEL_FORMULA_DIVISOR = 199
+                
+                -- Get tier multiplier from the game's Tiers module
+                local function getTierMultiplier(tier)
+                    if not tier or tier == "Normal" then
                         return 1
                     end
                     
-                    -- Calculate max level stats
-                    local function getMaxLevelStats(currentMultiplier, currentLevel, tierMultiplier)
-                        local levelMultiplier = (1 + currentLevel / LEVEL_FORMULA_DIVISOR)
-                        local trueBase = currentMultiplier / (tierMultiplier * levelMultiplier)
-                        local maxLevelMultiplier = (1 + MAX_LEVEL / LEVEL_FORMULA_DIVISOR)
-                        return trueBase * tierMultiplier * maxLevelMultiplier
+                    if PetStatsTiers[tier] and PetStatsTiers[tier][1] then
+                        return PetStatsTiers[tier][1]
                     end
                     
-                    while autoEquipCalculatedBestEnabled do
-                        pcall(function()
-                            -- Wait for data to be ready
-                            repeat task.wait() until ReplicationModule.Loaded and ReplicationModule.Data
+                    return 1
+                end
+                
+                -- Calculate max level stats
+                local function getMaxLevelStats(currentMultiplier, currentLevel, tierMultiplier)
+                    local levelMultiplier = (1 + currentLevel / LEVEL_FORMULA_DIVISOR)
+                    local trueBase = currentMultiplier / (tierMultiplier * levelMultiplier)
+                    local maxLevelMultiplier = (1 + MAX_LEVEL / LEVEL_FORMULA_DIVISOR)
+                    return trueBase * tierMultiplier * maxLevelMultiplier
+                end
+                
+                while autoEquipCalculatedBestEnabled do
+                    pcall(function()
+                        -- Wait for data to be ready
+                        repeat task.wait() until ReplicationModule.Loaded and ReplicationModule.Data
+                        
+                        -- Get max equipped pets limit
+                        local MAX_EQUIPPED_PETS = ReplicationModule.Data.EquipLimit or 5
+                        
+                        -- Calculate max stats for all pets
+                        local petList = {}
+                        
+                        for petId, petData in pairs(ReplicationModule.Data.Pets) do
+                            local tier = petData.Tier or "Normal"
+                            local tierMultiplier = getTierMultiplier(tier)
+                            local currentLevel = petData.Level or 1
+                            local currentMultiplier = petData.Multiplier1 or 0
                             
-                            -- Get max equipped pets limit
-                            local MAX_EQUIPPED_PETS = ReplicationModule.Data.EquipLimit or 5
+                            local maxStats = getMaxLevelStats(currentMultiplier, currentLevel, tierMultiplier)
                             
-                            -- Calculate max stats for all pets
-                            local petList = {}
+                            table.insert(petList, {
+                                id = petId,
+                                name = petData.Name or "Unknown",
+                                maxStats = maxStats,
+                                currentMultiplier = currentMultiplier,
+                                currentLevel = currentLevel,
+                                tier = tier,
+                                equipped = petData.Equipped or false
+                            })
+                        end
+                        
+                        -- Sort by max stats first, then by current multiplier, then by current level
+                        table.sort(petList, function(a, b)
+                            -- Compare max stats with a very small tolerance
+                            local maxDiff = math.abs(a.maxStats - b.maxStats)
                             
-                            for petId, petData in pairs(ReplicationModule.Data.Pets) do
-                                local tier = petData.Tier or "Normal"
-                                local tierMultiplier = getTierMultiplier(tier)
-                                local currentLevel = petData.Level or 1
-                                local currentMultiplier = petData.Multiplier1 or 0
-                                
-                                local maxStats = getMaxLevelStats(currentMultiplier, currentLevel, tierMultiplier)
-                                
-                                table.insert(petList, {
-                                    id = petId,
-                                    maxStats = maxStats,
-                                    equipped = petData.Equipped or false
-                                })
-                            end
-                            
-                            -- Sort by max stats (highest first)
-                            table.sort(petList, function(a, b)
-                                return a.maxStats > b.maxStats
-                            end)
-                            
-                            -- Get top pets based on EquipLimit
-                            local bestPetIds = {}
-                            for i = 1, math.min(MAX_EQUIPPED_PETS, #petList) do
-                                bestPetIds[petList[i].id] = true
-                            end
-                            
-                            -- Get current pet data
-                            local petDataTable = ReplicationModule.Data.Pets
-                            
-                            -- First pass: Unequip pets that shouldn't be equipped
-                            for petId, petData in pairs(petDataTable) do
-                                local shouldBeEquipped = bestPetIds[petId]
-                                
-                                if petData.Equipped and not shouldBeEquipped then
-                                    -- Send network request to unequip
-                                    pcall(function()
-                                        NetworkModule:InvokeServer("Unequip", petId)
-                                    end)
-                                    
-                                    -- Update UI
-                                    SignalModule.Fire("UnequipPetUI", petId)
-                                    
-                                    task.wait(0.1)
+                            if maxDiff < 1 then  -- If max stats are essentially the same
+                                -- Prioritize higher current multiplier
+                                if math.abs(a.currentMultiplier - b.currentMultiplier) > 0.01 then
+                                    return a.currentMultiplier > b.currentMultiplier
                                 end
+                                -- If current multipliers are also the same, prioritize higher level
+                                return a.currentLevel > b.currentLevel
                             end
                             
-                            task.wait(0.5)
-                            
-                            -- Second pass: Equip pets that should be equipped
-                            for petId, petData in pairs(petDataTable) do
-                                local shouldBeEquipped = bestPetIds[petId]
-                                
-                                if not petData.Equipped and shouldBeEquipped then
-                                    -- Send network request to equip
-                                    pcall(function()
-                                        NetworkModule:InvokeServer("Equip", petId)
-                                    end)
-                                    
-                                    -- Update UI
-                                    SignalModule.Fire("EquipPetUI", petId)
-                                    
-                                    task.wait(0.1)
-                                end
-                            end
+                            return a.maxStats > b.maxStats
                         end)
                         
-                        task.wait(5) 
-                    end
-                end)
-            end
+                        
+                        -- Get top pets based on EquipLimit
+                        local bestPetIds = {}
+                        for i = 1, math.min(MAX_EQUIPPED_PETS, #petList) do
+                            bestPetIds[petList[i].id] = true
+                        end
+                        
+                        -- Get current pet data
+                        local petDataTable = ReplicationModule.Data.Pets
+                        
+                        -- First pass: Unequip pets that shouldn't be equipped
+                        for petId, petData in pairs(petDataTable) do
+                            local shouldBeEquipped = bestPetIds[petId]
+                            
+                            if petData.Equipped and not shouldBeEquipped then
+                                -- Send network request to unequip
+                                pcall(function()
+                                    NetworkModule:InvokeServer("Unequip", petId)
+                                end)
+                                
+                                -- Update UI
+                                SignalModule.Fire("UnequipPetUI", petId)
+                                
+                                task.wait(0.1)
+                            end
+                        end
+                        
+                        task.wait(0.5)
+                        
+                        -- Second pass: Equip pets that should be equipped
+                        for petId, petData in pairs(petDataTable) do
+                            local shouldBeEquipped = bestPetIds[petId]
+                            
+                            if not petData.Equipped and shouldBeEquipped then
+                                -- Send network request to equip
+                                pcall(function()
+                                    NetworkModule:InvokeServer("Equip", petId)
+                                end)
+                                
+                                -- Update UI
+                                SignalModule.Fire("EquipPetUI", petId)
+                                
+                                task.wait(0.1)
+                            end
+                        end
+                    end)
+                    
+                    task.wait(5) 
+                end
+            end)
         end
-    })
+    end
+})
 
     EquipBestSection:AddParagraph("EquipBestInfo", {
         Title = "Equip Best Info",
