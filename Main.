@@ -807,7 +807,6 @@ BuildUI = function()
                 local character = LocalPlayer.Character
                 
                 if not character or not character:FindFirstChild("HumanoidRootPart") then
-                    warn("Character not found!")
                     return
                 end
                 
@@ -839,7 +838,7 @@ BuildUI = function()
                 
                 -- Tween 1: Shoot straight up incredibly fast
                 local tweenInfo1 = TweenInfo.new(
-                    3, -- 0.5 seconds to go up
+                    3, -- 0.5 seconds to go up 
                     Enum.EasingStyle.Sine,
                     Enum.EasingDirection.Out
                 )
@@ -2367,7 +2366,312 @@ AutoEquipCalculatedBestToggle = EquipBestSection:AddToggle("AutoEquipCalculatedB
         TitleAlignment = "Middle"
     })
 
+    local WebhookSection = Tabs.Discord:AddSection("Discord Webhook")
 
+    -- Webhook Configuration
+    local WEBHOOK_URL = ""
+    local DISCORD_USER_ID = ""
+    local selectedRarities = {}
+    local webhookEnabled = false
+    local webhookThread = nil
+
+    -- Get rarities from the game module
+    local PetStatsRarities = require(ReplicatedStorage.Game.PetStats.Rarities)
+
+    -- Build rarity list in the exact order from the module
+    local function getRarityList()
+        -- Define the order explicitly based on the module
+        local orderedRarities = {
+            "Common", 
+            "Rare",
+            "Epic",
+            "Legendary",
+            "Mythical",
+            "Godly",
+            "Exclusive",
+            "Secret I",
+            "Secret II",
+            "Secret III"
+        }
+        
+        -- Only include rarities that exist in the module
+        local result = {}
+        for _, rarity in ipairs(orderedRarities) do
+            if PetStatsRarities[rarity] then
+                table.insert(result, rarity)
+            end
+        end
+        
+        return result
+    end
+
+    -- Webhook URL Input
+    local webhookUrlInput = WebhookSection:AddInput("WebhookURL", {
+        Title = "Webhook URL",
+        Default = WEBHOOK_URL,
+        Numeric = false,
+        Finished = false,
+        Callback = function(value)
+            if value and value ~= "" then
+                WEBHOOK_URL = value
+            end
+        end
+    })
+
+    -- Discord User ID Input
+    local discordIdInput = WebhookSection:AddInput("DiscordUserID", {
+        Title = "Discord User ID",
+        Default = DISCORD_USER_ID,
+        Numeric = false,
+        Finished = false,
+        Callback = function(value)
+            if value and value ~= "" then
+                DISCORD_USER_ID = value
+            end
+        end
+    })
+
+    -- Rarity Dropdown (using game's rarities in exact order)
+    local raritiesDropdown = WebhookSection:Dropdown("WebhookRarities", {
+        Title = "Select Rarities",
+        Values = getRarityList(),
+        Searchable = true,
+        Multi = true,
+        Default = {},
+        Callback = function(value)
+            selectedRarities = {}
+            
+            if type(value) == "table" then
+                for rarity, isSelected in pairs(value) do
+                    if isSelected then
+                        selectedRarities[rarity] = true
+                    end
+                end
+            end
+        end
+    })
+
+    -- Function to get color for rarity from the game module
+    local function getRarityColor(rarity)
+        if PetStatsRarities[rarity] and PetStatsRarities[rarity][1] then
+            local color3 = PetStatsRarities[rarity][1]
+            -- Convert Color3 to Discord hex color
+            return math.floor(color3.R * 255) * 65536 + math.floor(color3.G * 255) * 256 + math.floor(color3.B * 255)
+        end
+        return 0xFFFFFF -- Default white
+    end
+
+    -- Function to send Discord webhook
+    local function sendDiscordWebhook(content, embeds)
+        if not WEBHOOK_URL or WEBHOOK_URL == "" then
+            return
+        end
+        
+        local success, response = pcall(function()
+            local data = {
+                content = content,
+                embeds = embeds
+            }
+            
+            return requestFunc({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = HttpService:JSONEncode(data)
+            })
+        end)
+        
+        if not success then
+        end
+    end
+
+    local showRobloxUser = false
+
+    local ShowUserToggle = WebhookSection:AddToggle("ShowRobloxUser", {
+        Title = "Show Roblox User",
+        Default = false,
+        Callback = function(Value)
+            showRobloxUser = Value
+        end
+    })
+
+    -- Enable Webhook Toggle
+    local EnableWebhookToggle = WebhookSection:AddToggle("EnableWebhook", {
+        Title = "Enable Webhook",
+        Default = false,
+        Callback = function(Value)
+            webhookEnabled = Value
+            
+            if webhookThread then
+                task.cancel(webhookThread)
+                webhookThread = nil
+            end
+            
+            if Value then
+                webhookThread = task.spawn(function()
+                    local PetStats = require(ReplicatedStorage.Game.PetStats)
+                    local Network = require(ReplicatedStorage.Modules.Network)
+                    
+                    -- Store original InvokeServer function
+                    local originalInvokeServer = Network.InvokeServer
+                    
+                    -- Hook InvokeServer
+                    Network.InvokeServer = function(self, eventName, ...)
+                        local args = {...}
+                        
+                        -- Check if it's an OpenEgg call
+                        if eventName == "OpenEgg" and webhookEnabled then
+                            local eggName = args[1]
+                            
+                            -- Call original and capture result
+                            local result = originalInvokeServer(self, eventName, ...)
+                            
+                            -- Process hatched pets
+                            if result ~= nil and type(result) == "table" then
+                                local petsToSend = {}
+                                
+                                for i, petData in ipairs(result) do
+                                    if petData ~= nil and type(petData) == "table" then
+                                        local petName = petData[1]
+                                        local tier = petData[2]
+                                        
+                                        if petName ~= nil then
+                                            -- Get rarity
+                                            local rarity = "Unknown"
+                                            pcall(function()
+                                                rarity = PetStats:GetRarity(petName, true) or "Unknown"
+                                            end)
+                                            
+                                            -- Check if we should send this rarity
+                                            if selectedRarities[rarity] then
+                                                table.insert(petsToSend, {
+                                                    name = petName,
+                                                    tier = tier,
+                                                    rarity = rarity
+                                                })
+                                            end
+                                        end
+                                    end
+                                end
+                                
+                                -- Send Discord webhook if we have pets to send
+                                if #petsToSend > 0 then
+                                    local pingContent = ""
+                                    if DISCORD_USER_ID and DISCORD_USER_ID ~= "" then
+                                        pingContent = string.format("<@%s>", DISCORD_USER_ID)
+                                    end
+                                    
+                                    local embedFields = {}
+                                    for i, pet in ipairs(petsToSend) do
+                                        table.insert(embedFields, {
+                                            name = string.format("🎉 Pet #%d", i),
+                                            value = string.format("**%s %s**\n✨ Rarity: `%s`", pet.tier or "Normal", pet.name, pet.rarity),
+                                            inline = true
+                                        })
+                                    end
+                                    
+                                    -- Get the highest rarity color
+                                    local embedColor = getRarityColor(petsToSend[1].rarity)
+                                    
+                                    local embeds = {
+                                        {
+                                            title = string.format("🥚 Hatched %d Pet(s) from %s Egg!", #petsToSend, eggName or "Unknown"),
+                                            color = embedColor,
+                                            fields = embedFields,
+                                            footer = {
+                                                text = showRobloxUser
+                                                    and string.format("👤 %s (%s)", username, userid)
+                                                    or "👤 Anonymous"
+                                            },
+                                            timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
+                                        }
+                                    }
+                                    
+                                    sendDiscordWebhook(pingContent, embeds)
+                                end
+                            end
+                            
+                            return result
+                        end
+                        
+                        -- For other events, just pass through
+                        return originalInvokeServer(self, eventName, ...)
+                    end
+
+                    
+                    -- Keep thread alive while webhook is enabled
+                    while webhookEnabled do
+                        task.wait(1)
+                    end
+                    
+                    -- Restore original function when disabled
+                    Network.InvokeServer = originalInvokeServer
+                end)
+                
+                Library:Notify({
+                    Title = "Webhook Enabled",
+                    Content = "Monitoring egg hatches for selected rarities!",
+                    Duration = 3
+                })
+            end
+        end
+    })
+
+    
+    -- Test Webhook Button
+    local TestWebhookButton = WebhookSection:AddButton({
+        Title = "Test Webhook",
+        Callback = function()
+            local testEmbeds = {
+                {
+                    title = "🔔 Webhook Test",
+                    description = "Your webhook is working correctly!",
+                    color = 0x00FF00,
+                    fields = {
+                        {
+                            name = "👤 User",
+                            value = showRobloxUser and username or "Anonymous",
+                            inline = true
+                        },
+                        {
+                            name = "🆔 User ID",
+                            value = showRobloxUser and tostring(userid) or "Hidden",
+                            inline = true
+                        },
+                        {
+                            name = "🎮 Game",
+                            value = "Tap Simulator",
+                            inline = false
+                        }
+                    },
+                    footer = {
+                        text = "By Ducky"
+                    },
+                    timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
+                }
+            }
+            
+            local pingContent = ""
+            if DISCORD_USER_ID and DISCORD_USER_ID ~= "" then
+                pingContent = string.format("<@%s>", DISCORD_USER_ID)
+            end
+            
+            sendDiscordWebhook(pingContent, testEmbeds)
+            Library:Notify({
+                Title = "Webhook Test",
+                Content = "Test message sent to Discord!",
+                Duration = 3
+            })
+        end
+    })
+
+    WebhookSection:AddParagraph("WebhookInfo", {
+        Title = "📖 How to Use",
+        Content = "\n1️⃣ Get your webhook URL from Discord (e.g. https://discordapp.com/api/webhooks/144869829200/NgO232_e5MjzIsERltnITXpvtHlPj5QpsOIjXbewr321):\n   Server Settings → Integrations → Webhooks → New Webhook\n\n2️⃣ Get your Discord User ID:\n   Enable Developer Mode → Right-click your name → Copy ID\n\n3️⃣ Select which rarities to be notified about\n\n4️⃣ Click 'Test Webhook' to verify it works\n\n5️⃣ Enable the webhook toggle." ,
+        TitleAlignment = "Left"
+    })
 
     SaveManager:SetLibrary(Library)
     InterfaceManager:SetLibrary(Library)
@@ -2452,6 +2756,7 @@ task.spawn(function()
         Crafting = Window:AddTab({ Title = "Pet Crafting", Icon = "paw-print" }),
         Teleport = Window:AddTab({ Title = "Teleport", Icon = "map" }),
         Misc = Window:AddTab({ Title = "Misc", Icon = "sparkles" }),
+        Discord = Window:AddTab({ Title = "Webhook", Icon = "phosphor-discord-logo-bold" })
     }
 
     BuildUI()
