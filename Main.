@@ -2756,7 +2756,7 @@ task.spawn(function()
         Crafting = Window:AddTab({ Title = "Pet Crafting", Icon = "paw-print" }),
         Teleport = Window:AddTab({ Title = "Teleport", Icon = "map" }),
         Misc = Window:AddTab({ Title = "Misc", Icon = "sparkles" }),
-        Discord = Window:AddTab({ Title = "Webhook", Icon = "phosphor-discord-logo-bold" })
+        Discord = Window:AddTab({ Title = "Webhook", Icon = "phosphor-discord-logo" })
     }
 
     BuildUI()
