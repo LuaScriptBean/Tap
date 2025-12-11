@@ -1740,6 +1740,87 @@ BuildUI = function()
         end
     })
 
+    local QuestsSection = Tabs.Misc:AddSection("Quests")
+
+    local autoClaimQuestsEnabled = false
+    local autoClaimQuestsThread = nil
+
+    local ClaimQuestsToggle = QuestsSection:AddToggle("ClaimQuests", {
+        Title = "Auto Claim Quests",
+        Default = false,
+        Callback = function(Value)
+            autoClaimQuestsEnabled = Value
+            
+            if autoClaimQuestsThread then
+                task.cancel(autoClaimQuestsThread)
+                autoClaimQuestsThread = nil
+            end
+            
+            if Value then
+                autoClaimQuestsThread = task.spawn(function()
+                    local Replication = require(ReplicatedStorage.Game.Replication)
+                    local Quests = require(ReplicatedStorage.Game.Quests)
+                    local PlayerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+                    
+                    while autoClaimQuestsEnabled do
+                        -- Refresh data
+                        repeat task.wait() until Replication.Loaded and Replication.Data
+                        
+                        -- Get all unclaimed completed quests
+                        if Replication.Data.Quests then
+                            for questName, questData in pairs(Replication.Data.Quests) do
+                                local questInfo = Quests[questName]
+                                
+                                if questInfo then
+                                    local amount = questData.Amount or 0
+                                    local goal = questInfo.Goal or 0
+                                    local completed = questData.Completed or (amount >= goal)
+                                    local claimed = questData.Claimed or false
+                                    
+                                    -- Check if completed but not claimed
+                                    if autoClaimQuestsEnabled and completed and not claimed then
+                                        -- Find the quest UI element and fire the Hitbox Activated event
+                                        pcall(function()
+                                            local questsUI = PlayerGui:FindFirstChild("RightHud")
+                                            if questsUI then
+                                                questsUI = questsUI:FindFirstChild("Main")
+                                                if questsUI then
+                                                    questsUI = questsUI:FindFirstChild("RightUI")
+                                                    if questsUI then
+                                                        questsUI = questsUI:FindFirstChild("Quests")
+                                                        if questsUI then
+                                                            questsUI = questsUI:FindFirstChild("List")
+                                                            if questsUI then
+                                                                local questFrame = questsUI:FindFirstChild(questName)
+                                                                if questFrame then
+                                                                    local hitbox = questFrame:FindFirstChild("Hitbox")
+                                                                    if hitbox then
+                                                                        -- Fire the Activated event
+                                                                        for _, connection in pairs(getconnections(hitbox.Activated)) do
+                                                                            connection:Fire()
+                                                                        end
+                                                                    end
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end)
+                                        
+                                        task.wait(0.5)
+                                    end
+                                end
+                            end
+                        end
+                        
+                        task.wait(5)
+                    end
+                end)
+            end
+        end
+    })
+
 
     local AutoBuyPotionsSection = Tabs.Misc:AddSection("Auto Buy Potions")
 
