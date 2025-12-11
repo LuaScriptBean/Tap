@@ -1095,30 +1095,24 @@ BuildUI = function()
                                                 if island then
                                                     local DojoFolder = island:FindFirstChild("Dojo")
                                                     if DojoFolder then
-                                                        local children = DojoFolder:GetChildren()
+
                                                         local goldenPart = nil
-                                                        
-                                                        -- Look for the Model with Golden inside
-                                                        for _, child in ipairs(children) do
-                                                            if child:IsA("Model") then
-                                                                local modelChild = child:FindFirstChild("Model")
-                                                                if modelChild then
-                                                                    local foundGolden = modelChild:FindFirstChild("Golden")
-                                                                    if foundGolden then
-                                                                        goldenPart = foundGolden
-                                                                        break
-                                                                    end
-                                                                end
+
+                                                        -- Look through ALL descendants for "Golden"
+                                                        for _, obj in ipairs(DojoFolder:GetDescendants()) do
+                                                            if obj.Name == "Golden" then
+                                                                goldenPart = obj
+                                                                break
                                                             end
                                                         end
-                                                        
+
                                                         -- Move the teleport logic OUTSIDE the loop
                                                         if goldenPart then
                                                             local targetPos = goldenPart.CFrame.Position
                                                             local currentPos = character.HumanoidRootPart.Position
                                                             local xDiff = math.abs(currentPos.X - targetPos.X)
                                                             local zDiff = math.abs(currentPos.Z - targetPos.Z)
-                                                            
+
                                                             if not movedToGoldenMachine or xDiff > 5 or zDiff > 5 then
                                                                 pcall(function()
                                                                     character:PivotTo(goldenPart.CFrame + Vector3.new(0, 3, 0))
@@ -1130,7 +1124,7 @@ BuildUI = function()
                                                     end
                                                 end
                                             end
-                                            
+
                                             craftedThisLoop = true
                                             pcall(function()
                                                 Network:InvokeServer("CraftPets", petIds)
@@ -1428,30 +1422,24 @@ BuildUI = function()
                                         if island then
                                             local DojoFolder = island:FindFirstChild("Dojo")
                                             if DojoFolder then
-                                                local children = DojoFolder:GetChildren()
+
                                                 local goldenPart = nil
-                                                
-                                                -- Look for the Model with Golden inside
-                                                for _, child in ipairs(children) do
-                                                    if child:IsA("Model") then
-                                                        local modelChild = child:FindFirstChild("Model")
-                                                        if modelChild then
-                                                            local foundGolden = modelChild:FindFirstChild("Golden")
-                                                            if foundGolden then
-                                                                goldenPart = foundGolden
-                                                                break
-                                                            end
-                                                        end
+
+                                                -- Look through ALL descendants for "Golden"
+                                                for _, obj in ipairs(DojoFolder:GetDescendants()) do
+                                                    if obj.Name == "Golden" then
+                                                        goldenPart = obj
+                                                        break
                                                     end
                                                 end
-                                                
+
                                                 -- Move the teleport logic OUTSIDE the loop
                                                 if goldenPart then
                                                     local targetPos = goldenPart.CFrame.Position
                                                     local currentPos = character.HumanoidRootPart.Position
                                                     local xDiff = math.abs(currentPos.X - targetPos.X)
                                                     local zDiff = math.abs(currentPos.Z - targetPos.Z)
-                                                    
+
                                                     if not movedToGoldenMachine or xDiff > 5 or zDiff > 5 then
                                                         pcall(function()
                                                             character:PivotTo(goldenPart.CFrame + Vector3.new(0, 3, 0))
@@ -1463,6 +1451,7 @@ BuildUI = function()
                                             end
                                         end
                                     end
+
 
                                     craftedAny = true
                                     pcall(function()
@@ -1820,7 +1809,6 @@ BuildUI = function()
             end
         end
     })
-
 
     local AutoBuyPotionsSection = Tabs.Misc:AddSection("Auto Buy Potions")
 
