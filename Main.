@@ -2943,6 +2943,14 @@ for attempt = 1, maxRetries do
                                         end
                                     end
                                     
+                                    local function safeGetStatText(statUI)
+                                        local success, result = pcall(function()
+                                            return statUI.Value.Text
+                                        end)
+                                        return success and result or "—"
+                                    end
+
+                                    
                                     local embeds = {
                                         {
                                             title = "📊 Tap Simulator Stats",
@@ -3011,17 +3019,22 @@ for attempt = 1, maxRetries do
                                                 {
                                                     name = "🍀 Luck Stats",
                                                     value = string.format("**✨ Secret:** %s\n**🌟 Golden:** %s\n**🌈 Rainbow:** %s\n**🥚 Hatch Speed:** %s",
-                                                        statsUI.SecretLuck.Value.Text,
-                                                        statsUI.GoldLuck.Value.Text,
-                                                        statsUI.RainbowLuck.Value.Text or "—",
-                                                        statsUI.HatchSpeed.Value.Text),
+                                                        safeGetStatText(statsUI.SecretLuck),
+                                                        safeGetStatText(statsUI.GoldLuck),
+                                                        safeGetStatText(statsUI.RainbowLuck),
+                                                        safeGetStatText(statsUI.HatchSpeed)),
                                                     inline = true
                                                 },
                                                 {
                                                     name = "⚡ Boosts",
-                                                    value = string.format("**💪 Multiplier:** %s\n\n%s", 
-                                                        statsUI.BoostsMulti.Value.Text, 
-                                                        boostsText),
+                                                    value = (function()
+                                                        local multiplier = statsUI.BoostsMulti.Value.Text
+                                                        if multiplier == "None" then
+                                                            return "**💪 Multiplier:** None"
+                                                        else
+                                                            return string.format("**💪 Multiplier:** %s\n\n%s", multiplier, boostsText)
+                                                        end
+                                                    end)(),
                                                     inline = true
                                                 },
                                                 {
