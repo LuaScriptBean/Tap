@@ -2528,19 +2528,28 @@ for attempt = 1, maxRetries do
 
             local WebhookSection = Tabs.Discord:AddSection("Discord Webhook")
 
+            WebhookSection:AddParagraph("WebhookInfo", {
+                Title = "📖 How to Use",
+                Content = "\n1️⃣ Get your webhook URL from Discord (e.g. https://discordapp.com/api/webhooks/144869829200/NgO232_e5MjzIsERltnITXpvtHlPj5QpsOIjXbewr321):\n   Server Settings → Integrations → Webhooks → New Webhook\n\n2️⃣ Get your Discord User ID:\n   Enable Developer Mode → Right-click your name → Copy ID\n\n3️⃣ Configure settings below\n\n4️⃣ Click 'Test Webhook' to verify it works\n\n5️⃣ Enable the webhook toggles for what you want to track" ,
+                TitleAlignment = "Left"
+            })
+
             -- Webhook Configuration
             local WEBHOOK_URL = ""
             local DISCORD_USER_ID = ""
             local selectedRarities = {}
             local webhookEnabled = false
             local webhookThread = nil
+            local statsWebhookEnabled = false
+            local statsWebhookThread = nil
+            local pingUserForStats = false
+            local statsWebhookDelay = 30
 
             -- Get rarities from the game module
             local PetStatsRarities = require(ReplicatedStorage.Game.PetStats.Rarities)
 
             -- Build rarity list in the exact order from the module
             local function getRarityList()
-                -- Define the order explicitly based on the module
                 local orderedRarities = {
                     "Common", 
                     "Rare",
@@ -2554,7 +2563,6 @@ for attempt = 1, maxRetries do
                     "Secret III"
                 }
                 
-                -- Only include rarities that exist in the module
                 local result = {}
                 for _, rarity in ipairs(orderedRarities) do
                     if PetStatsRarities[rarity] then
@@ -2565,60 +2573,13 @@ for attempt = 1, maxRetries do
                 return result
             end
 
-            -- Webhook URL Input
-            local webhookUrlInput = WebhookSection:AddInput("WebhookURL", {
-                Title = "Webhook URL",
-                Default = WEBHOOK_URL,
-                Numeric = false,
-                Finished = false,
-                Callback = function(value)
-                    if value and value ~= "" then
-                        WEBHOOK_URL = value
-                    end
-                end
-            })
-
-            -- Discord User ID Input
-            local discordIdInput = WebhookSection:AddInput("DiscordUserID", {
-                Title = "Discord User ID",
-                Default = DISCORD_USER_ID,
-                Numeric = false,
-                Finished = false,
-                Callback = function(value)
-                    if value and value ~= "" then
-                        DISCORD_USER_ID = value
-                    end
-                end
-            })
-
-            -- Rarity Dropdown (using game's rarities in exact order)
-            local raritiesDropdown = WebhookSection:Dropdown("WebhookRarities", {
-                Title = "Select Rarities",
-                Values = getRarityList(),
-                Searchable = true,
-                Multi = true,
-                Default = {},
-                Callback = function(value)
-                    selectedRarities = {}
-                    
-                    if type(value) == "table" then
-                        for rarity, isSelected in pairs(value) do
-                            if isSelected then
-                                selectedRarities[rarity] = true
-                            end
-                        end
-                    end
-                end
-            })
-
             -- Function to get color for rarity from the game module
             local function getRarityColor(rarity)
                 if PetStatsRarities[rarity] and PetStatsRarities[rarity][1] then
                     local color3 = PetStatsRarities[rarity][1]
-                    -- Convert Color3 to Discord hex color
                     return math.floor(color3.R * 255) * 65536 + math.floor(color3.G * 255) * 256 + math.floor(color3.B * 255)
                 end
-                return 0xFFFFFF -- Default white
+                return 0xFFFFFF
             end
 
             -- Function to send Discord webhook
@@ -2642,147 +2603,49 @@ for attempt = 1, maxRetries do
                         Body = HttpService:JSONEncode(data)
                     })
                 end)
-                
-                if not success then
-                end
             end
+
+            -- Settings Section
+            local SettingsSection = Tabs.Discord:AddSection("Settings")
+
+            local webhookUrlInput = SettingsSection:AddInput("WebhookURL", {
+                Title = "Webhook URL",
+                Default = WEBHOOK_URL,
+                Numeric = false,
+                Finished = false,
+                Callback = function(value)
+                    if value and value ~= "" then
+                        WEBHOOK_URL = value
+                    end
+                end
+            })
+
+            local discordIdInput = SettingsSection:AddInput("DiscordUserID", {
+                Title = "Discord User ID",
+                Default = DISCORD_USER_ID,
+                Numeric = false,
+                Finished = false,
+                Callback = function(value)
+                    if value and value ~= "" then
+                        DISCORD_USER_ID = value
+                    end
+                end
+            })
 
             local showRobloxUser = false
 
-            local ShowUserToggle = WebhookSection:AddToggle("ShowRobloxUser", {
+            local ShowUserToggle = SettingsSection:AddToggle("ShowRobloxUser", {
                 Title = "Show Roblox User",
+                Description = "Shows your Roblox username in webhook embeds",
                 Default = false,
                 Callback = function(Value)
                     showRobloxUser = Value
                 end
             })
 
-            -- Enable Webhook Toggle
-            local EnableWebhookToggle = WebhookSection:AddToggle("EnableWebhook", {
-                Title = "Enable Webhook",
-                Default = false,
-                Callback = function(Value)
-                    webhookEnabled = Value
-                    
-                    if webhookThread then
-                        task.cancel(webhookThread)
-                        webhookThread = nil
-                    end
-                    
-                    if Value then
-                        webhookThread = task.spawn(function()
-                            local PetStats = require(ReplicatedStorage.Game.PetStats)
-                            local Network = require(ReplicatedStorage.Modules.Network)
-                            
-                            -- Store original InvokeServer function
-                            local originalInvokeServer = Network.InvokeServer
-                            
-                            -- Hook InvokeServer
-                            Network.InvokeServer = function(self, eventName, ...)
-                                local args = {...}
-                                
-                                -- Check if it's an OpenEgg call
-                                if eventName == "OpenEgg" and webhookEnabled then
-                                    local eggName = args[1]
-                                    
-                                    -- Call original and capture result
-                                    local result = originalInvokeServer(self, eventName, ...)
-                                    
-                                    -- Process hatched pets
-                                    if result ~= nil and type(result) == "table" then
-                                        local petsToSend = {}
-                                        
-                                        for i, petData in ipairs(result) do
-                                            if petData ~= nil and type(petData) == "table" then
-                                                local petName = petData[1]
-                                                local tier = petData[2]
-                                                
-                                                if petName ~= nil then
-                                                    -- Get rarity
-                                                    local rarity = "Unknown"
-                                                    pcall(function()
-                                                        rarity = PetStats:GetRarity(petName, true) or "Unknown"
-                                                    end)
-                                                    
-                                                    -- Check if we should send this rarity
-                                                    if selectedRarities[rarity] then
-                                                        table.insert(petsToSend, {
-                                                            name = petName,
-                                                            tier = tier,
-                                                            rarity = rarity
-                                                        })
-                                                    end
-                                                end
-                                            end
-                                        end
-                                        
-                                        -- Send Discord webhook if we have pets to send
-                                        if #petsToSend > 0 then
-                                            local pingContent = ""
-                                            if DISCORD_USER_ID and DISCORD_USER_ID ~= "" then
-                                                pingContent = string.format("<@%s>", DISCORD_USER_ID)
-                                            end
-                                            
-                                            local embedFields = {}
-                                            for i, pet in ipairs(petsToSend) do
-                                                table.insert(embedFields, {
-                                                    name = string.format("🎉 Pet #%d", i),
-                                                    value = string.format("**%s %s**\n✨ Rarity: `%s`", pet.tier or "Normal", pet.name, pet.rarity),
-                                                    inline = true
-                                                })
-                                            end
-                                            
-                                            -- Get the highest rarity color
-                                            local embedColor = getRarityColor(petsToSend[1].rarity)
-                                            
-                                            local embeds = {
-                                                {
-                                                    title = string.format("🥚 Hatched %d Pet(s) from %s Egg!", #petsToSend, eggName or "Unknown"),
-                                                    color = embedColor,
-                                                    fields = embedFields,
-                                                    footer = {
-                                                        text = showRobloxUser
-                                                            and string.format("👤 %s (%s)", username, userid)
-                                                            or "👤 Anonymous"
-                                                    },
-                                                    timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
-                                                }
-                                            }
-                                            
-                                            sendDiscordWebhook(pingContent, embeds)
-                                        end
-                                    end
-                                    
-                                    return result
-                                end
-                                
-                                -- For other events, just pass through
-                                return originalInvokeServer(self, eventName, ...)
-                            end
-
-                            
-                            -- Keep thread alive while webhook is enabled
-                            while webhookEnabled do
-                                task.wait(1)
-                            end
-                            
-                            -- Restore original function when disabled
-                            Network.InvokeServer = originalInvokeServer
-                        end)
-                        
-                        Library:Notify({
-                            Title = "Webhook Enabled",
-                            Content = "Monitoring egg hatches for selected rarities!",
-                            Duration = 3
-                        })
-                    end
-                end
-            })
-
-            
-            -- Test Webhook Button
-            local TestWebhookButton = WebhookSection:AddButton({
+            local TestWebhookButton = SettingsSection:AddButton({
                 Title = "Test Webhook",
+                Description = "Sends a test message to verify your webhook works",
                 Callback = function()
                     local testEmbeds = {
                         {
@@ -2827,12 +2690,377 @@ for attempt = 1, maxRetries do
                 end
             })
 
-            WebhookSection:AddParagraph("WebhookInfo", {
-                Title = "📖 How to Use",
-                Content = "\n1️⃣ Get your webhook URL from Discord (e.g. https://discordapp.com/api/webhooks/144869829200/NgO232_e5MjzIsERltnITXpvtHlPj5QpsOIjXbewr321):\n   Server Settings → Integrations → Webhooks → New Webhook\n\n2️⃣ Get your Discord User ID:\n   Enable Developer Mode → Right-click your name → Copy ID\n\n3️⃣ Select which rarities to be notified about\n\n4️⃣ Click 'Test Webhook' to verify it works\n\n5️⃣ Enable the webhook toggle." ,
-                TitleAlignment = "Left"
+            -- Pet Webhook Section
+            local PetWebhookSection = Tabs.Discord:AddSection("Pet Webhook")
+
+            local raritiesDropdown = PetWebhookSection:Dropdown("WebhookRarities", {
+                Title = "Select Rarities to Track",
+                Values = getRarityList(),
+                Searchable = true,
+                Multi = true,
+                Default = {},
+                Callback = function(value)
+                    selectedRarities = {}
+                    
+                    if type(value) == "table" then
+                        for rarity, isSelected in pairs(value) do
+                            if isSelected then
+                                selectedRarities[rarity] = true
+                            end
+                        end
+                    end
+                end
             })
 
+            local EnableWebhookToggle = PetWebhookSection:AddToggle("EnableWebhook", {
+                Title = "Enable Pet Webhook",
+                Description = "Sends notifications when you hatch selected rarities",
+                Default = false,
+                Callback = function(Value)
+                    webhookEnabled = Value
+                    
+                    if webhookThread then
+                        task.cancel(webhookThread)
+                        webhookThread = nil
+                    end
+                    
+                    if Value then
+                        webhookThread = task.spawn(function()
+                            local PetStats = require(ReplicatedStorage.Game.PetStats)
+                            local Network = require(ReplicatedStorage.Modules.Network)
+                            
+                            local originalInvokeServer = Network.InvokeServer
+                            
+                            Network.InvokeServer = function(self, eventName, ...)
+                                local args = {...}
+                                
+                                if eventName == "OpenEgg" and webhookEnabled then
+                                    local eggName = args[1]
+                                    local result = originalInvokeServer(self, eventName, ...)
+                                    
+                                    if result ~= nil and type(result) == "table" then
+                                        local petsToSend = {}
+                                        
+                                        for i, petData in ipairs(result) do
+                                            if petData ~= nil and type(petData) == "table" then
+                                                local petName = petData[1]
+                                                local tier = petData[2]
+                                                
+                                                if petName ~= nil then
+                                                    local rarity = "Unknown"
+                                                    pcall(function()
+                                                        rarity = PetStats:GetRarity(petName, true) or "Unknown"
+                                                    end)
+                                                    
+                                                    if selectedRarities[rarity] then
+                                                        table.insert(petsToSend, {
+                                                            name = petName,
+                                                            tier = tier,
+                                                            rarity = rarity
+                                                        })
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        
+                                        if #petsToSend > 0 then
+                                            local pingContent = ""
+                                            if DISCORD_USER_ID and DISCORD_USER_ID ~= "" then
+                                                pingContent = string.format("<@%s>", DISCORD_USER_ID)
+                                            end
+                                            
+                                            local embedFields = {}
+                                            for i, pet in ipairs(petsToSend) do
+                                                table.insert(embedFields, {
+                                                    name = string.format("🎉 Pet #%d", i),
+                                                    value = string.format("**%s %s**\n✨ Rarity: `%s`", pet.tier or "Normal", pet.name, pet.rarity),
+                                                    inline = true
+                                                })
+                                            end
+                                            
+                                            local embedColor = getRarityColor(petsToSend[1].rarity)
+                                            
+                                            local embeds = {
+                                                {
+                                                    title = string.format("🥚 Hatched %d Pet(s) from %s Egg!", #petsToSend, eggName or "Unknown"),
+                                                    color = embedColor,
+                                                    fields = embedFields,
+                                                    footer = {
+                                                        text = showRobloxUser
+                                                            and string.format("👤 %s (%s)", username, userid)
+                                                            or "👤 Anonymous"
+                                                    },
+                                                    timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
+                                                }
+                                            }
+                                            
+                                            sendDiscordWebhook(pingContent, embeds)
+                                        end
+                                    end
+                                    
+                                    return result
+                                end
+                                
+                                return originalInvokeServer(self, eventName, ...)
+                            end
+                            
+                            while webhookEnabled do
+                                task.wait(1)
+                            end
+                            
+                            Network.InvokeServer = originalInvokeServer
+                        end)
+                        
+                        Library:Notify({
+                            Title = "Pet Webhook Enabled",
+                            Content = "Monitoring egg hatches for selected rarities!",
+                            Duration = 3
+                        })
+                    end
+                end
+            })
+
+            local StatsWebhookSection = Tabs.Discord:AddSection("Main Stats Webhook")
+
+            local statsDelayInput = StatsWebhookSection:AddInput("StatsWebhookDelay", {
+                Title = "Frequency (Seconds)",
+                Default = "30",
+                Numeric = true,
+                Description = "How often to send stats updates",
+                Callback = function(value)
+                    local num = tonumber(value)
+                    if num and num > 0 then
+                        statsWebhookDelay = num
+                    else
+                        statsWebhookDelay = 30
+                        Library:Notify({
+                            Title = "Invalid Input",
+                            Content = "Please enter a positive number. Reset to 30.",
+                            Duration = 2
+                        })
+                    end
+                end
+            })
+
+            local PingUserForStatsToggle = StatsWebhookSection:AddToggle("PingUserForStats", {
+                Title = "Ping User for Stats",
+                Default = false,
+                Callback = function(Value)
+                    pingUserForStats = Value
+                end
+            })
+
+            local EnableStatsWebhookToggle = StatsWebhookSection:AddToggle("EnableStatsWebhook", {
+                Title = "Enable Stats Webhook",
+                Default = false,
+                Callback = function(Value)
+                    statsWebhookEnabled = Value
+                    
+                    if statsWebhookThread then
+                        task.cancel(statsWebhookThread)
+                        statsWebhookThread = nil
+                    end
+                    
+                    if Value then
+                        statsWebhookThread = task.spawn(function()
+                            local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+                            
+                            while statsWebhookEnabled do
+                                pcall(function()
+                                    repeat task.wait() until Replication.Loaded and Replication.Data
+                                    
+                                    local data = Replication.Data
+                                    local leaderstats = LocalPlayer:WaitForChild("leaderstats")
+                                    local statsUI = PlayerGui:WaitForChild("RightHud"):WaitForChild("Main"):WaitForChild("RightUI"):WaitForChild("Badges"):WaitForChild("List"):WaitForChild("Stats")
+                                    
+                                    local function getMostHatchedEgg()
+                                        if not data.HatchedEggs then return "None", 0 end
+                                        
+                                        local mostEgg = "None"
+                                        local mostCount = 0
+                                        
+                                        for eggName, count in pairs(data.HatchedEggs) do
+                                            if count > mostCount then
+                                                mostCount = count
+                                                mostEgg = eggName
+                                            end
+                                        end
+                                        
+                                        return mostEgg, mostCount
+                                    end
+                                    
+                                    local function formatTime(seconds)
+                                        if not seconds then return "Unknown" end
+                                        local days = math.floor(seconds / 86400)
+                                        local hours = math.floor((seconds % 86400) / 3600)
+                                        local minutes = math.floor((seconds % 3600) / 60)
+                                        
+                                        if days > 0 then
+                                            return string.format("%dd %dh %dm", days, hours, minutes)
+                                        elseif hours > 0 then
+                                            return string.format("%dh %dm", hours, minutes)
+                                        else
+                                            return string.format("%dm", minutes)
+                                        end
+                                    end
+                                    
+                                    local mostEgg, mostEggCount = getMostHatchedEgg()
+                                    local totalData = data.Total or {}
+                                    
+                                    local petCount = 0
+                                    local equippedCount = 0
+                                    for petId, petData in pairs(data.Pets or {}) do
+                                        petCount = petCount + 1
+                                        if petData.Equipped then
+                                            equippedCount = equippedCount + 1
+                                        end
+                                    end
+                                    
+                                    local boostsText = "None"
+                                    if data.Boosts then
+                                        local boostLines = {}
+                                        for boostName, amount in pairs(data.Boosts) do
+                                            if amount > 0 then
+                                                table.insert(boostLines, string.format("%s: %d", boostName, amount))
+                                            end
+                                        end
+                                        if #boostLines > 0 then
+                                            boostsText = table.concat(boostLines, "\n")
+                                        end
+                                    end
+                                    
+                                    local activeBoostsText = "None active"
+                                    if data.ActiveBoosts then
+                                        local activeLines = {}
+                                        for boostName, timeLeft in pairs(data.ActiveBoosts) do
+                                            local hours = math.floor(timeLeft / 3600)
+                                            local minutes = math.floor((timeLeft % 3600) / 60)
+                                            local seconds = timeLeft % 60
+                                            table.insert(activeLines, string.format("%s: %dh %dm %ds", boostName, hours, minutes, seconds))
+                                        end
+                                        if #activeLines > 0 then
+                                            activeBoostsText = table.concat(activeLines, "\n")
+                                        end
+                                    end
+                                    
+                                    local embeds = {
+                                        {
+                                            title = "📊 Tap Simulator Stats",
+                                            color = 0x5865F2,
+                                            fields = {
+                                                {
+                                                    name = "💎 Gems",
+                                                    value = string.format("%s (%s total)", 
+                                                        formatNumber(data.Statistics.Gems or 0), 
+                                                        formatNumber(totalData.Gems or 0)),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🔥 Clicks",
+                                                    value = string.format("%s (%s actual)", 
+                                                        formatNumber(data.Statistics.Clicks or 0), 
+                                                        formatNumber(totalData.ActualClicks or 0)),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "👆 Total Pet Power",
+                                                    value = statsUI.TotalPetPower.Value.Text,
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🔄 Rebirths",
+                                                    value = formatNumber(data.Statistics.Rebirths or 0),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🔄 Rebirth Multiplier",
+                                                    value = statsUI.RebirthMulti.Value.Text,
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🥚 Eggs Opened",
+                                                    value = formatNumber(data.Statistics.Eggs or 0),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🌟 Best Hatch",
+                                                    value = tostring(leaderstats.Rarest.Value or "None"),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🥚 Most Hatched Egg",
+                                                    value = string.format("%s (%s times)", mostEgg, formatNumber(mostEggCount)),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "⏰ Time Played",
+                                                    value = formatTime(totalData.Time),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🏆 Leaderboard Rank",
+                                                    value = "#" .. statsUI.LeaderboardRank.Placement.Text,
+                                                    inline = false
+                                                },
+                                                {
+                                                    name = "🐾 Pets",
+                                                    value = string.format("**Total:** %d\n**Equipped:** %d\n**Discovered:** %d", 
+                                                        petCount, equippedCount, data.DiscoveredCount or 0),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🍀 Luck Stats",
+                                                    value = string.format("**✨ Secret:** %s\n**🌟 Golden:** %s\n**🌈 Rainbow:** %s\n**🥚 Hatch Speed:** %s",
+                                                        statsUI.SecretLuck.Value.Text,
+                                                        statsUI.GoldLuck.Value.Text,
+                                                        statsUI.RainbowLuck.Value.Text or "—",
+                                                        statsUI.HatchSpeed.Value.Text),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "⚡ Boosts",
+                                                    value = string.format("**💪 Multiplier:** %s\n\n%s", 
+                                                        statsUI.BoostsMulti.Value.Text, 
+                                                        boostsText),
+                                                    inline = true
+                                                },
+                                                {
+                                                    name = "🎨 Active Boosts",
+                                                    value = activeBoostsText,
+                                                    inline = false
+                                                }
+                                            },
+                                            footer = {
+                                                text = showRobloxUser
+                                                    and string.format("👤 %s", username)
+                                                    or "👤 Anonymous"
+                                            },
+                                            timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
+                                        }
+                                    }
+                                    
+                                    local pingContent = ""
+                                    if pingUserForStats and DISCORD_USER_ID and DISCORD_USER_ID ~= "" then
+                                        pingContent = string.format("<@%s>", DISCORD_USER_ID)
+                                    end
+                                    
+                                    sendDiscordWebhook(pingContent, embeds)
+                                end)
+                                
+                                -- Use the current value of statsWebhookDelay (not a captured value)
+                                local currentDelay = statsWebhookDelay or 30
+                                task.wait(currentDelay)
+                            end
+                        end)
+                        
+                        Library:Notify({
+                            Title = "Stats Webhook Enabled",
+                            Content = string.format("Sending stats every %d seconds!", statsWebhookDelay),
+                            Duration = 3
+                        })
+                    end
+                end
+            })
             SaveManager:SetLibrary(Library)
             InterfaceManager:SetLibrary(Library)
             SaveManager:IgnoreThemeSettings()
