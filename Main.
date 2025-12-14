@@ -1022,6 +1022,8 @@ for attempt = 1, maxRetries do
                 end
             })
 
+            
+
             TeleportOnJoinSection:AddParagraph("TeleportOnJoinInfo", {
                 Title = "Info",
                 Content = "Enable this toggle and select a zone to automatically teleport when you join the game. Mainly used for auto execute/load.",
@@ -1219,7 +1221,7 @@ for attempt = 1, maxRetries do
                                         goldenPetsNeeded = 6
                                     end
                                     
-                                    local movedToDojo = false
+                                    local movedToCandy = false
                                     local movedToGoldenMachine = false
                                     
                                     while autoCraftEnabled and autoRainbowEnabled do
@@ -1231,54 +1233,53 @@ for attempt = 1, maxRetries do
                                                 local petIds = getPetIdsForCraft(petName, goldenPetsNeeded)
                                                 
                                                 if #petIds >= goldenPetsNeeded then
-                                                    if not movedToDojo then
+                                                    if not movedToCandy then
                                                         local character = LocalPlayer.Character
                                                         if character and character:FindFirstChild("HumanoidRootPart") then
                                                             local zones = getAllZones()
                                                             for _, zone in ipairs(zones) do
-                                                                if zone.name == "Dojo" then
+                                                                if zone.name == "Candy" then
                                                                     pcall(function()
                                                                         character:PivotTo(zone.cframe)
                                                                     end)
-                                                                    movedToDojo = true
+                                                                    movedToCandy = true
                                                                     task.wait(0.5)
                                                                     break
                                                                 end
                                                             end
                                                         end
                                                     end
-                                                                                                                                            
+
                                                     local character = LocalPlayer.Character
                                                     if character and character:FindFirstChild("HumanoidRootPart") then
-                                                        local island = workspace:FindFirstChild("Island")
-                                                        if island then
-                                                            local DojoFolder = island:FindFirstChild("Dojo")
-                                                            if DojoFolder then
+                                                        local candy = workspace:FindFirstChild("Candy")
+                                                        if candy then
+                                                            local goldenPart = nil
 
-                                                                local goldenPart = nil
-
-                                                                -- Look through ALL descendants for "Golden"
-                                                                for _, obj in ipairs(DojoFolder:GetDescendants()) do
-                                                                    if obj.Name == "Golden" then
-                                                                        goldenPart = obj
+                                                            -- Look ONLY in workspace.Candy Models
+                                                            for _, model in ipairs(candy:GetChildren()) do
+                                                                if model:IsA("Model") then
+                                                                    local golden = model:FindFirstChild("Golden")
+                                                                    if golden and golden:IsA("BasePart") then
+                                                                        goldenPart = golden
                                                                         break
                                                                     end
                                                                 end
+                                                            end
 
-                                                                -- Move the teleport logic OUTSIDE the loop
-                                                                if goldenPart then
-                                                                    local targetPos = goldenPart.CFrame.Position
-                                                                    local currentPos = character.HumanoidRootPart.Position
-                                                                    local xDiff = math.abs(currentPos.X - targetPos.X)
-                                                                    local zDiff = math.abs(currentPos.Z - targetPos.Z)
+                                                            -- Teleport to the machine
+                                                            if goldenPart then
+                                                                local hrp = character.HumanoidRootPart
+                                                                local targetPos = goldenPart.Position
+                                                                local currentPos = hrp.Position
 
-                                                                    if not movedToGoldenMachine or xDiff > 5 or zDiff > 5 then
-                                                                        pcall(function()
-                                                                            character:PivotTo(goldenPart.CFrame + Vector3.new(0, 3, 0))
-                                                                        end)
-                                                                        movedToGoldenMachine = true
-                                                                        task.wait(0.5)
-                                                                    end
+                                                                if not movedToGoldenMachine or (currentPos - targetPos).Magnitude > 5 then
+                                                                    pcall(function()
+                                                                        character:PivotTo(goldenPart.CFrame * CFrame.new(0, 3, 0))
+                                                                    end)
+
+                                                                    movedToGoldenMachine = true
+                                                                    task.wait(0.5)
                                                                 end
                                                             end
                                                         end
@@ -1557,13 +1558,13 @@ for attempt = 1, maxRetries do
                                                 end
                                             end
                                             
-                                            -- Teleport to Dojo zone only once
+                                            -- Teleport to Candy zone only once
                                             if not hasMovedToZone then
                                                 local character = LocalPlayer.Character
                                                 if character and character:FindFirstChild("HumanoidRootPart") then
                                                     local zones = getAllZones()
                                                     for _, zone in ipairs(zones) do
-                                                        if zone.name == "Dojo" then
+                                                        if zone.name == "Candy" then
                                                             pcall(function()
                                                                 character:PivotTo(zone.cframe)
                                                             end)
@@ -1574,43 +1575,40 @@ for attempt = 1, maxRetries do
                                                     end
                                                 end
                                             end
-                                            
                                             local character = LocalPlayer.Character
                                             if character and character:FindFirstChild("HumanoidRootPart") then
-                                                local island = workspace:FindFirstChild("Island")
-                                                if island then
-                                                    local DojoFolder = island:FindFirstChild("Dojo")
-                                                    if DojoFolder then
+                                                local candy = workspace:FindFirstChild("Candy")
+                                                if candy then
+                                                    local goldenPart = nil
 
-                                                        local goldenPart = nil
-
-                                                        -- Look through ALL descendants for "Golden"
-                                                        for _, obj in ipairs(DojoFolder:GetDescendants()) do
-                                                            if obj.Name == "Golden" then
-                                                                goldenPart = obj
+                                                    -- Look ONLY in workspace.Candy Models
+                                                    for _, model in ipairs(candy:GetChildren()) do
+                                                        if model:IsA("Model") then
+                                                            local golden = model:FindFirstChild("Golden")
+                                                            if golden and golden:IsA("BasePart") then
+                                                                goldenPart = golden
                                                                 break
                                                             end
                                                         end
+                                                    end
 
-                                                        -- Move the teleport logic OUTSIDE the loop
-                                                        if goldenPart then
-                                                            local targetPos = goldenPart.CFrame.Position
-                                                            local currentPos = character.HumanoidRootPart.Position
-                                                            local xDiff = math.abs(currentPos.X - targetPos.X)
-                                                            local zDiff = math.abs(currentPos.Z - targetPos.Z)
+                                                    -- Teleport to the machine
+                                                    if goldenPart then
+                                                        local hrp = character.HumanoidRootPart
+                                                        local targetPos = goldenPart.Position
+                                                        local currentPos = hrp.Position
 
-                                                            if not movedToGoldenMachine or xDiff > 5 or zDiff > 5 then
-                                                                pcall(function()
-                                                                    character:PivotTo(goldenPart.CFrame + Vector3.new(0, 3, 0))
-                                                                end)
-                                                                movedToGoldenMachine = true
-                                                                task.wait(0.5)
-                                                            end
+                                                        if not movedToGoldenMachine or (currentPos - targetPos).Magnitude > 5 then
+                                                            pcall(function()
+                                                                character:PivotTo(goldenPart.CFrame * CFrame.new(0, 3, 0))
+                                                            end)
+
+                                                            movedToGoldenMachine = true
+                                                            task.wait(0.5)
                                                         end
                                                     end
                                                 end
                                             end
-
 
                                             craftedAny = true
                                             pcall(function()
@@ -1660,6 +1658,42 @@ for attempt = 1, maxRetries do
             ParagraphGolden = CraftingSection:AddParagraph("GoldenInfo",{
                 Title = "Note",
                 Content = "You will need to stand close to the machine for some reason for this to work.",
+            })
+
+
+            local UnlockAll = Tabs.Misc:AddSection("Unlock All Zones")
+
+            local TweenService = game:GetService("TweenService")
+
+            UnlockAll:AddButton({
+                Title = "Unlock All Zones",
+                Callback = function()
+                    local highestZone = nil
+                    local highestY = -math.huge
+
+                    for _, zone in ipairs(zones) do
+                        if zone.cframe and zone.cframe.Position.Y > highestY then
+                            highestY = zone.cframe.Position.Y
+                            highestZone = zone
+                        end
+                    end
+
+                    if highestZone then
+                        local character = LocalPlayer.Character
+                        if character and character:FindFirstChild("HumanoidRootPart") then
+                            local hrp = character.HumanoidRootPart
+
+                            -- Tween starts instantly, lasts 3 seconds
+                            local tween = TweenService:Create(
+                                hrp,
+                                TweenInfo.new(5, Enum.EasingStyle.Linear),
+                                { CFrame = highestZone.cframe }
+                            )
+
+                            tween:Play()
+                        end
+                    end
+                end
             })
 
             local MiscSection = Tabs.Misc:AddSection("Chests")
