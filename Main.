@@ -566,33 +566,40 @@ for attempt = 1, maxRetries do
             local autoHatchEnabled = false
             local autoHatchThread = nil
             
-            -- Build egg dropdown values (excluding eggs with Currency field and Chronos Egg)
+            -- Build egg dropdown values (excluding eggs with Currency field, Chronos Egg, and Price = 0)
             local function getEggDropdownValues()
                 local eggList = {}
                 local sortedEggs = {}
-                
-                -- Collect all eggs without Currency field and exclude Chronos Egg
+
+                -- Collect eggs
                 for eggName, eggData in pairs(Eggs) do
-                    if type(eggData) == "table" and not eggData.Currency and eggData.Price and eggName ~= "Chronos Egg" then
+                    if type(eggData) == "table"
+                        and not eggData.Currency
+                        and eggData.Price
+                        and eggData.Price > 0
+                        and eggName ~= "Chronos Egg" then
+
                         table.insert(sortedEggs, {
                             name = eggName,
                             price = eggData.Price
                         })
                     end
                 end
-                
+
                 -- Sort by price (lowest to highest)
-                table.sort(sortedEggs, function(a, b) return a.price < b.price end)
-                
+                table.sort(sortedEggs, function(a, b)
+                    return a.price < b.price
+                end)
+
                 -- Format dropdown values
                 for _, egg in ipairs(sortedEggs) do
                     local priceStr = formatNumber(egg.price)
                     table.insert(eggList, string.format("%s - %s", egg.name, priceStr))
                 end
-                
+
                 return eggList, sortedEggs
             end
-            
+
             local eggDropdownValues, sortedEggs = getEggDropdownValues()
             
             -- Set default egg (safely)
