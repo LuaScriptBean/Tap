@@ -1697,6 +1697,228 @@ for attempt = 1, maxRetries do
                 Content = "You will need to stand close to the machine for some reason for this to work.",
             })
 
+            local EnchantSection = Tabs.Enchant:AddSection("Auto Enchant")
+
+            local EnchantData = require(ReplicatedStorage.Game.EnchantData)
+            local Network = require(ReplicatedStorage.Modules.Network)
+
+            local selectedEnchants = {}
+            local selectedPets = {}
+            local enchantPetDropdown = nil
+            local enchantStatusParagraph = nil
+            local autoEnchantEnabled = false
+            local autoEnchantThread = nil
+            local periodicUpdateThread = nil
+            local petDropdownMap = {}
+
+            local function getEnchantNames()
+                local enchantList = {}
+                if EnchantData and EnchantData.Enchants then
+                    for enchantName, _ in pairs(EnchantData.Enchants) do
+                        table.insert(enchantList, enchantName)
+                    end
+                end
+                local nameOrder = { Taps = 1, Gems = 2, Rebirths = 3, Luck = 4 }
+                local tierOrder = { I = 1, II = 2, III = 3 }
+                table.sort(enchantList, function(a, b)
+                    local nameA, tierA = a:match("^(.-) (I+)$")
+                    local nameB, tierB = b:match("^(.-) (I+)$")
+                    if nameA and not nameB then return true end
+                    if not nameA and nameB then return false end
+                    if nameA and nameB then
+                        local orderA = nameOrder[nameA] or 99
+                        local orderB = nameOrder[nameB] or 99
+                        if orderA ~= orderB then
+                            return orderA < orderB
+                        else
+                            return (tierOrder[tierA] or 99) < (tierOrder[tierB] or 99)
+                        end
+                    end
+                    return a < b
+                end)
+                return enchantList
+            end
+
+            local function getFormattedPetList()
+                repeat task.wait() until Replication.Loaded and Replication.Data and Replication.Data.Pets
+                petDropdownMap = {}
+                local petsToSort = {}
+                for id, petData in pairs(Replication.Data.Pets) do
+                    table.insert(petsToSort, petData)
+                end
+                table.sort(petsToSort, function(a, b)
+                    return (tonumber(a.Multiplier1) or 0) > (tonumber(b.Multiplier1) or 0)
+                end)
+                local formattedList = {}
+                for i, petData in ipairs(petsToSort) do
+                    local formattedMultiplier = formatNumber(tonumber(petData.Multiplier1) or 0)
+                    local petString = string.format("%s (x%s)", petData.Name or "Unknown", formattedMultiplier)
+                    if petData.Enchant and petData.Enchant ~= "" then
+                        petString = petString .. ": " .. petData.Enchant
+                    end
+                    local finalDropdownString = string.format("%d. %s", i, petString)
+                    table.insert(formattedList, finalDropdownString)
+                    petDropdownMap[finalDropdownString] = petData.Id
+                end
+                return formattedList
+            end
+
+            local function updateEnchantStatus()
+                if not enchantStatusParagraph then return end
+                if autoEnchantEnabled then return end
+
+                local crystalCount = (Replication.Data and Replication.Data.Items and Replication.Data.Items.EnchantCrystal) or 0
+                local content = "Enchant Crystals: " .. tostring(crystalCount) .. "\n\n--- Selected Pets ---\n"
+                local groupedPets = {}
+                local hasSelection = false
+
+                for petString, isSelected in pairs(selectedPets) do
+                    if isSelected then
+                        hasSelection = true
+                        local petId = petDropdownMap[petString]
+                        if petId and Replication.Data.Pets[petId] then
+                            local currentPetData = Replication.Data.Pets[petId]
+                            local formattedMultiplier = formatNumber(tonumber(currentPetData.Multiplier1) or 0)
+                            local livePetString = string.format("%s (x%s)", currentPetData.Name or "Unknown", formattedMultiplier)
+                            if currentPetData.Enchant and currentPetData.Enchant ~= "" then
+                                livePetString = livePetString .. ": " .. currentPetData.Enchant
+                            end
+                            groupedPets[livePetString] = (groupedPets[livePetString] or 0) + 1
+                        end
+                    end
+                end
+
+                if not hasSelection then
+                    content = content .. "None"
+                else
+                    for pet, count in pairs(groupedPets) do
+                        if count > 1 then
+                            content = content .. tostring(count) .. "x " .. pet .. "\n"
+                        else
+                            content = content .. pet .. "\n"
+                        end
+                    end
+                end
+                enchantStatusParagraph:SetContent(content)
+            end
+
+            EnchantSection:Dropdown("SelectEnchantsDropdown", {
+                Title = "Select Desired Enchant(s)",
+                Values = getEnchantNames(),
+                Multi = true,
+                Searchable = true,
+                Default = {},
+                Callback = function(value)
+                    selectedEnchants = value
+                end
+            })
+
+            enchantPetDropdown = EnchantSection:Dropdown("SelectPetsDropdown", {
+                Title = "Select Pet(s) to Enchant",
+                Values = getFormattedPetList(),
+                Multi = true,
+                Searchable = true,
+                Default = {},
+                Callback = function(value)
+                    selectedPets = value
+                    updateEnchantStatus()
+                end
+            })
+
+            EnchantSection:AddButton({
+                Title = "Refresh Pets",
+                Callback = function()
+                    if enchantPetDropdown then
+                        local currentSelection = selectedPets
+                        enchantPetDropdown:SetValues(getFormattedPetList())
+                        enchantPetDropdown:SetValue(currentSelection)
+                    end
+                end
+            })
+
+            local AutoEnchantToggle = EnchantSection:AddToggle("AutoEnchantToggle", {
+                Title = "Auto Enchant",
+                Default = false,
+                Callback = function(Value)
+                    autoEnchantEnabled = Value
+
+                    if periodicUpdateThread then
+                        task.cancel(periodicUpdateThread)
+                        periodicUpdateThread = nil
+                    end
+                    if autoEnchantThread then
+                        task.cancel(autoEnchantThread)
+                        autoEnchantThread = nil
+                    end
+
+                    if Value then
+                        if not next(selectedPets) or not next(selectedEnchants) then
+                            autoEnchantEnabled = false
+                            task.spawn(function() task.wait(); AutoEnchantToggle:SetValue(false) end)
+                            return
+                        end
+
+                        autoEnchantThread = task.spawn(function()
+                            while autoEnchantEnabled do
+                                local petsToEnchant = {}
+                                for petString, isSelected in pairs(selectedPets) do
+                                    if isSelected then
+                                        local petId = petDropdownMap[petString]
+                                        if petId and Replication.Data.Pets[petId] then
+                                            local currentEnchant = Replication.Data.Pets[petId].Enchant or ""
+                                            if not selectedEnchants[currentEnchant] then
+                                                table.insert(petsToEnchant, {id = petId, name = Replication.Data.Pets[petId].Name})
+                                            end
+                                        end
+                                    end
+                                end
+
+                                local crystalCount = (Replication.Data.Items and Replication.Data.Items.EnchantCrystal) or 0
+                                if #petsToEnchant == 0 then
+                                    enchantStatusParagraph:SetContent("Enchant Crystals: " .. crystalCount .. "\n\nAll selected pets have a desired enchant!")
+                                    task.wait(3)
+                                else
+                                    local targetPet = petsToEnchant[1]
+                                    enchantStatusParagraph:SetContent("Enchant Crystals: " .. crystalCount .. "\n\nAttempting to enchant: " .. targetPet.name)
+                                    
+                                    if crystalCount > 0 then
+                                        pcall(Network.InvokeServer, Network, "EnchantPet", targetPet.id)
+                                    else
+                                        enchantStatusParagraph:SetContent("Out of Enchant Crystals! Stopping.")
+                                        task.spawn(function() task.wait(); AutoEnchantToggle:SetValue(false) end)
+                                        break
+                                    end
+                                end
+                                task.wait(1)
+                            end
+                        end)
+                    else
+                        periodicUpdateThread = task.spawn(function()
+                            while not autoEnchantEnabled do
+                                updateEnchantStatus()
+                                task.wait(5)
+                            end
+                        end)
+                    end
+                end
+            })
+
+            enchantStatusParagraph = EnchantSection:AddParagraph("EnchantStatus", {
+                Title = "Status",
+                Content = "Loading..."
+            })
+
+            task.spawn(function()
+                repeat task.wait() until Replication.Loaded and Replication.Data
+                updateEnchantStatus()
+            end)
+
+            Replication:Connect("Items", function()
+                if not autoEnchantEnabled then
+                    updateEnchantStatus()
+                end
+            end)
+
 
             local UnlockAll = Tabs.Misc:AddSection("Unlock All Zones")
 
@@ -1808,23 +2030,16 @@ for attempt = 1, maxRetries do
                                 -- Get all zones sorted by price
                                 local zoneList = {}
                                 
-                                -- Add spawn point first
                                 local SpawnPoint = Zones:FindFirstChild("TpPoint")
                                 if SpawnPoint then
-                                    table.insert(zoneList, {
-                                        name = "Spawn",
-                                        price = 0,
-                                        cframe = SpawnPoint.CFrame
-                                    })
+                                    table.insert(zoneList, { name = "Spawn", price = 0, cframe = SpawnPoint.CFrame })
                                 end
                                 
                                 for portalName, portalData in pairs(Portals) do
                                     local portalFolder = PortalsFolder:FindFirstChild(portalName)
-                                    
                                     if portalFolder and portalFolder:IsA("Folder") then
                                         local teleportCFrame
                                         local tpObject = portalFolder:FindFirstChild("TP")
-                                        
                                         if tpObject and tpObject.CFrame then
                                             teleportCFrame = tpObject.CFrame
                                         else
@@ -1836,13 +2051,8 @@ for attempt = 1, maxRetries do
                                                 end
                                             end
                                         end
-                                        
                                         if teleportCFrame then
-                                            table.insert(zoneList, {
-                                                name = portalName,
-                                                price = portalData.Price,
-                                                cframe = teleportCFrame
-                                            })
+                                            table.insert(zoneList, { name = portalName, price = portalData.Price, cframe = teleportCFrame })
                                         end
                                     end
                                 end
@@ -1854,78 +2064,84 @@ for attempt = 1, maxRetries do
                                     if not autoClaimWorldChestsEnabled then break end
                                     
                                     -- Teleport to zone
-                                    local character = LocalPlayer.Character
                                     if character and character:FindFirstChild("HumanoidRootPart") then
-                                        pcall(function()
-                                            character:PivotTo(zone.cframe)
-                                        end)
+                                        pcall(function() character:PivotTo(zone.cframe) end)
                                         task.wait(0.5) -- Wait for teleport
                                     end
                                     
-                                    -- Claim all chests in this zone
+                                    -- ===== LOGIC 1: Claim chests from the central folder =====
                                     local worldChests = workspace:FindFirstChild("Game")
                                     if worldChests then
                                         worldChests = worldChests:FindFirstChild("WorldChests")
                                     end
                                     
                                     if worldChests then
-                                        -- Keep claiming until all chests are transparent
                                         while autoClaimWorldChestsEnabled do
                                             local hasVisibleChest = false
-                                            
                                             for _, chest in ipairs(worldChests:GetChildren()) do
                                                 if not autoClaimWorldChestsEnabled then break end
-                                                
                                                 if chest:IsA("Model") or chest:IsA("Folder") then
-                                                    -- Check for the Circle mesh to see if chest is claimed
                                                     local circleMesh = chest:FindFirstChild("Meshes/clickerchest_Circle", true)
-                                                    
                                                     if circleMesh and circleMesh.Transparency < 1 then
                                                         hasVisibleChest = true
-                                                        
-                                                        -- Touch the chest
                                                         local hitbox = chest:FindFirstChild("Hitbox")
-                                                        if hitbox and hitbox:FindFirstChild("TouchInterest") then
-                                                            if character and character:FindFirstChild("HumanoidRootPart") then
-                                                                pcall(function()
-                                                                    firetouchinterest(character.HumanoidRootPart, hitbox, 0)
-                                                                    task.wait(0.1)
-                                                                    firetouchinterest(character.HumanoidRootPart, hitbox, 1)
-                                                                end)
-                                                            end
-                                                            
+                                                        if hitbox and hitbox:FindFirstChild("TouchInterest") and character and character:FindFirstChild("HumanoidRootPart") then
+                                                            pcall(function()
+                                                                firetouchinterest(character.HumanoidRootPart, hitbox, 0)
+                                                                task.wait(0.1)
+                                                                firetouchinterest(character.HumanoidRootPart, hitbox, 1)
+                                                            end)
                                                             task.wait(0.25)
                                                         end
                                                     end
                                                 end
                                             end
-                                            
-                                            -- If no more visible chests, move to next zone
-                                            if not hasVisibleChest then
-                                                break
+                                            if not hasVisibleChest then break end
+                                        end
+                                    end
+
+                                    -- ===== LOGIC 2: Claim chests from the zone's specific folder (e.g., workspace.Atlantis) =====
+                                    local zoneFolder = workspace:FindFirstChild(zone.name)
+                                    if zoneFolder then
+                                        while autoClaimWorldChestsEnabled do
+                                            local hasVisibleChestInZone = false
+                                            for _, potentialChest in ipairs(zoneFolder:GetChildren()) do
+                                                if not autoClaimWorldChestsEnabled then break end
+                                                -- Check if it is a ClickerChest model
+                                                if (potentialChest:IsA("Model") or potentialChest:IsA("Folder")) and potentialChest.Name == "ClickerChest" then
+                                                    -- Check if the chest is still claimable
+                                                    local circleMesh = potentialChest:FindFirstChild("Meshes/clickerchest_Circle", true)
+                                                    if circleMesh and circleMesh.Transparency < 1 then
+                                                        hasVisibleChestInZone = true
+                                                        local hitbox = potentialChest:FindFirstChild("Hitbox")
+                                                        if hitbox and hitbox:FindFirstChild("TouchInterest") and character and character:FindFirstChild("HumanoidRootPart") then
+                                                            pcall(function()
+                                                                firetouchinterest(character.HumanoidRootPart, hitbox, 0)
+                                                                task.wait(0.1)
+                                                                firetouchinterest(character.HumanoidRootPart, hitbox, 1)
+                                                            end)
+                                                            task.wait(0.25)
+                                                        end
+                                                    end
+                                                end
                                             end
+                                            -- If no more visible chests were found in this zone, move to the next zone
+                                            if not hasVisibleChestInZone then break end
                                         end
                                     end
                                 end
                                 
                                 -- Return to original position
-                                if originalCFrame and autoClaimWorldChestsEnabled then
-                                    local character = LocalPlayer.Character
-                                    if character and character:FindFirstChild("HumanoidRootPart") then
-                                        pcall(function()
-                                            character:PivotTo(originalCFrame)
-                                        end)
-                                    end
+                                if originalCFrame and autoClaimWorldChestsEnabled and character and character:FindFirstChild("HumanoidRootPart") then
+                                    pcall(function() character:PivotTo(originalCFrame) end)
                                 end
                                 
-                                -- Wait 30 seconds before next cycle
                                 task.wait(30)
                             end
                         end)
                     end
                 end
             })
-
 
             RankRewardSection = Tabs.Misc:AddSection("Rank Reward")
 
@@ -2336,7 +2552,7 @@ for attempt = 1, maxRetries do
                         local PetStatsTiers = require(ReplicatedStorage.Game.PetStats.Tiers)
                         
                         -- Constants
-                        local MAX_LEVEL = 50
+                        local MAX_LEVEL = 75
                         local LEVEL_FORMULA_DIVISOR = 199
                         
                         -- Get tier multiplier from the game's Tiers module
@@ -2496,7 +2712,7 @@ for attempt = 1, maxRetries do
                                     -- Check if all non-locked pets are at max level
                                     local allPetsMaxLevel = true
                                     for _, petData in pairs(ReplicationModule.Data.Pets) do
-                                        if not petData.Locked and (petData.Level or 1) < 50 then
+                                        if not petData.Locked and (petData.Level or 1) < 75 then
                                             allPetsMaxLevel = false
                                             break
                                         end
@@ -3375,6 +3591,7 @@ for attempt = 1, maxRetries do
                 Eggs = Window:AddTab({ Title = "Eggs", Icon = "egg" }),
                 Crafting = Window:AddTab({ Title = "Pet Crafting", Icon = "paw-print" }),
                 Teleport = Window:AddTab({ Title = "Teleport", Icon = "map" }),
+                Enchant = Window:AddTab({ Title = "Enchanting", Icon = "phosphor-magic-wand-bold" }),
                 Misc = Window:AddTab({ Title = "Misc", Icon = "sparkles" }),
                 Discord = Window:AddTab({ Title = "Webhook", Icon = "phosphor-discord-logo" })
             }
