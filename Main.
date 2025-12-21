@@ -1029,8 +1029,7 @@ for attempt = 1, maxRetries do
                 end
             })
 
-            
-
+        
             TeleportOnJoinSection:AddParagraph("TeleportOnJoinInfo", {
                 Title = "Info",
                 Content = "Enable this toggle and select a zone to automatically teleport when you join the game. Mainly used for auto execute/load.",
@@ -1309,7 +1308,7 @@ for attempt = 1, maxRetries do
                                                         craftedThisLoop = true
                                                         pcall(function()
                                                             Network:InvokeServer("CraftPets", petIds)
-                                                        end) -- Fixed: Added ')'
+                                                        end)
                                                         task.wait(1)
                                                     end
                                                 end
@@ -1388,7 +1387,7 @@ for attempt = 1, maxRetries do
                                                                 if zone.name == "Heaven" then
                                                                     pcall(function()
                                                                         character:PivotTo(zone.cframe)
-                                                                    end) -- Fixed: Added ')'
+                                                                    end)
                                                                     hasMovedToZone = true
                                                                     task.wait(0.5)
                                                                     break
@@ -1446,7 +1445,7 @@ for attempt = 1, maxRetries do
                                                     
                                                     pcall(function()
                                                         Network:InvokeServer("StartRainbow", petIds)
-                                                    end) -- Fixed: Added ')'
+                                                    end) 
                                                     availableSlots = availableSlots - 1
                                                     task.wait(1)
                                                 end
@@ -2041,6 +2040,39 @@ for attempt = 1, maxRetries do
                 end
             })
 
+            local MinigameSection = Tabs.Misc:AddSection("Dig Minigame")
+
+            local autoMinigameEnabled = false
+            local autoMinigameThread = nil
+
+            MinigameSection:AddToggle("AutoMinigameToggle", {
+                Title = "Auto Dig",
+                Default = false,
+                Callback = function(Value)
+                    autoMinigameEnabled = Value
+                    
+                    if autoMinigameThread then
+                        task.cancel(autoMinigameThread)
+                        autoMinigameThread = nil
+                    end
+                    
+                    if Value then
+                        autoMinigameThread = task.spawn(function()
+                            local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
+                            
+                            while autoMinigameEnabled do
+                                pcall(function()
+                                    Network:InvokeServer("StartMinigame", "DigGame")
+                                    task.wait(0.25)
+                                    Network:InvokeServer("FinishMinigame", "DigGame")
+                                end)
+                                task.wait(1) 
+                            end
+                        end)
+                    end
+                end
+            })
+
             local AutoBuyPotionsSection = Tabs.Misc:AddSection("Auto Buy Potions")
 
             local selectedPotionAmounts = {}
@@ -2429,9 +2461,123 @@ for attempt = 1, maxRetries do
             end
         })
 
+
+        AutoEquipLowestLevelToggle = EquipBestSection:AddToggle("AutoEquipLowestLevel", {
+                Title = "Auto Equip Lowest Level",
+                Default = false,
+                Callback = function(Value)
+                    autoEquipLowestLevelEnabled = Value
+
+                    -- Turn off other toggles if this one is enabled
+                    if Value then
+                        if autoEquipBestEnabled then
+                            AutoEquipBestToggle:SetValue(false)
+                        end
+                        if autoEquipCalculatedBestEnabled then
+                            AutoEquipCalculatedBestToggle:SetValue(false)
+                        end
+                    end
+
+                    if autoEquipLowestLevelThread then
+                        task.cancel(autoEquipLowestLevelThread)
+                        autoEquipLowestLevelThread = nil
+                    end
+
+                    if Value then
+                        autoEquipLowestLevelThread = task.spawn(function()
+                            local NetworkModule = require(ReplicatedStorage.Modules.Network)
+                            local ReplicationModule = require(ReplicatedStorage.Game.Replication)
+                            local SignalModule = require(ReplicatedStorage.Modules.Signal)
+
+                            while autoEquipLowestLevelEnabled do
+                                pcall(function()
+                                    repeat task.wait() until ReplicationModule.Loaded and ReplicationModule.Data
+                                    
+                                    -- Check if all non-locked pets are at max level
+                                    local allPetsMaxLevel = true
+                                    for _, petData in pairs(ReplicationModule.Data.Pets) do
+                                        if not petData.Locked and (petData.Level or 1) < 50 then
+                                            allPetsMaxLevel = false
+                                            break
+                                        end
+                                    end
+
+                                    if allPetsMaxLevel then
+                                        -- If all pets are max level, equip the BEST pets instead
+                                        local bestPetIdsList = NetworkModule:InvokeServer("EquipBest")
+                                        if bestPetIdsList and type(bestPetIdsList) == "table" then
+                                            local bestPetSet = {}
+                                            for _, petId in ipairs(bestPetIdsList) do
+                                                bestPetSet[petId] = true
+                                            end
+
+                                            local currentPetData = ReplicationModule.Data.Pets
+                                            for petId, petData in pairs(currentPetData) do
+                                                if petData.Equipped and not bestPetSet[petId] then
+                                                    pcall(NetworkModule.InvokeServer, NetworkModule, "Unequip", petId)
+                                                    SignalModule.Fire("UnequipPetUI", petId)
+                                                    task.wait(0.1)
+                                                end
+                                            end
+
+                                            task.wait(0.5)
+
+                                            for petId, petData in pairs(currentPetData) do
+                                                if not petData.Equipped and bestPetSet[petId] then
+                                                    pcall(NetworkModule.InvokeServer, NetworkModule, "Equip", petId)
+                                                    SignalModule.Fire("EquipPetUI", petId)
+                                                    task.wait(0.1)
+                                                end
+                                            end
+                                        end
+                                    else
+                                        local MAX_EQUIPPED_PETS = ReplicationModule.Data.EquipLimit or 5
+                                        local petList = {}
+
+                                        for petId, petData in pairs(ReplicationModule.Data.Pets) do
+                                            if not petData.Locked then
+                                                table.insert(petList, { id = petId, level = petData.Level or 1 })
+                                            end
+                                        end
+
+                                        table.sort(petList, function(a, b) return a.level < b.level end)
+
+                                        local lowestLevelPetIds = {}
+                                        for i = 1, math.min(MAX_EQUIPPED_PETS, #petList) do
+                                            lowestLevelPetIds[petList[i].id] = true
+                                        end
+
+                                        local currentPetData = ReplicationModule.Data.Pets
+
+                                        for petId, petData in pairs(currentPetData) do
+                                            if petData.Equipped and not lowestLevelPetIds[petId] then
+                                                pcall(NetworkModule.InvokeServer, NetworkModule, "Unequip", petId)
+                                                SignalModule.Fire("UnequipPetUI", petId)
+                                                task.wait(0.1)
+                                            end
+                                        end
+
+                                        task.wait(0.5)
+
+                                        for petId, petData in pairs(currentPetData) do
+                                            if not petData.Equipped and lowestLevelPetIds[petId] then
+                                                pcall(NetworkModule.InvokeServer, NetworkModule, "Equip", petId)
+                                                SignalModule.Fire("EquipPetUI", petId)
+                                                task.wait(0.1)
+                                            end
+                                        end
+                                    end
+                                end)
+                                task.wait(5)
+                            end
+                        end)
+                    end
+                end
+            })
+
             EquipBestSection:AddParagraph("EquipBestInfo", {
                 Title = "Equip Best Info",
-                Content = "Auto Equip Calculated Best: Calculates the mathematically best pets based on max level potential (Level 50) - so if you have a 10x pet for example thats level 1, it will find what stat it will be at level 50, and equip it if this is betetr then your equipped pets.",
+                Content = "Auto Equip Calculated Best: Calculates the mathematically best pets based on max level potential (Level 50) - so if you have a 10x pet for example thats level 1, it will find what stat it will be at level 50, and equip it if this is better then your equipped pets. \n\nAuto Equip Lowest Level: Equips the lowest level pets you own, useful for leveling up pets quickly to get on leaderboards.",
                 TitleAlignment = "Middle"
             })
 
