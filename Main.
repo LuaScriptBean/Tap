@@ -2806,35 +2806,16 @@ for attempt = 1, maxRetries do
             local autoDeleteUnderThresholdThread = nil
             local autoDeleteWeakestThread = nil
 
-            -- Parse formatted numbers (e.g., "1.2k", "5m", "1200")
             local function parseFormattedNumber(input)
                 if not input or input == "" then return 0 end
-                
                 input = tostring(input):lower():gsub("%s+", "")
-                
-                local multipliers = {
-                    k = 1e3,
-                    m = 1e6,
-                    b = 1e9,
-                    t = 1e12,
-                    qd = 1e15,
-                    qn = 1e18,
-                    sx = 1e21,
-                    sp = 1e24,
-                    oc = 1e27
-                }
-                
-                -- Check for multiplier suffix
+                local multipliers = { k = 1e3, m = 1e6, b = 1e9, t = 1e12, qd = 1e15, qn = 1e18, sx = 1e21, sp = 1e24, oc = 1e27 }
                 for suffix, mult in pairs(multipliers) do
                     if input:match(suffix .. "$") then
                         local number = tonumber(input:match("^([%d%.]+)"))
-                        if number then
-                            return number * mult
-                        end
+                        if number then return number * mult end
                     end
                 end
-                
-                -- Plain number
                 return tonumber(input) or 0
             end
 
@@ -2843,21 +2824,15 @@ for attempt = 1, maxRetries do
                 repeat task.wait() until Replication.Loaded and Replication.Data
                 
                 local pets = {}
-                
                 for petId, petData in pairs(Replication.Data.Pets) do
                     if not petData.Locked then
-                        table.insert(pets, {
-                            id = petId,
-                            name = petData.Name or "Unknown",
-                            multiplier = petData.Multiplier1 or 0,
-                            tier = petData.Tier or "Normal"
-                        })
+                        -- We can just insert the whole petData table
+                        table.insert(pets, petData)
                     end
                 end
                 
-                -- Sort by multiplier (weakest to strongest)
                 table.sort(pets, function(a, b) 
-                    return a.multiplier < b.multiplier 
+                    return (tonumber(a.Multiplier1) or 0) < (tonumber(b.Multiplier1) or 0)
                 end)
                 
                 return pets
@@ -2889,26 +2864,17 @@ for attempt = 1, maxRetries do
                             local Network = require(ReplicatedStorage.Modules.Network)
                             
                             while autoDeleteUnderThresholdEnabled do
-                                -- Refresh data
                                 repeat task.wait() until Replication.Loaded and Replication.Data
-                                
                                 local allPets = getAllPetsSorted()
-                                local deletedCount = 0
                                 
-                                -- Delete pets under clicks threshold
                                 if deleteClicksThreshold > 0 then
                                     for _, pet in ipairs(allPets) do
-                                        if autoDeleteUnderThresholdEnabled and pet.multiplier < deleteClicksThreshold then
-                                            pcall(function()
-                                                Network:InvokeServer("DeletePet", pet.id)
-                                            end)
-                                            deletedCount = deletedCount + 1
+                                        if autoDeleteUnderThresholdEnabled and (tonumber(pet.Multiplier1) or 0) < deleteClicksThreshold then
+                                            pcall(Network.InvokeServer, Network, "DeletePet", pet.Id)
                                             task.wait(0.25)
                                         end
                                     end
                                 end
-                                
-                                -- Wait 5 seconds before next check
                                 task.wait(5)
                             end
                         end)
