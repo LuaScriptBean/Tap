@@ -691,48 +691,38 @@ for attempt = 1, maxRetries do
 
             local AutoDeleteSection = Tabs.Eggs:AddSection("Auto Delete")
 
-            local Eggs = require(ReplicatedStorage.Game.Eggs)
             local selectedDeleteEgg = nil
             local selectedDeletePets = {}
             local deleteDropdown = nil
 
-            -- Build egg dropdown for auto delete
             local function getDeleteEggValues()
                 local eggList = {}
-                
                 for eggName, eggData in pairs(Eggs) do
                     if type(eggData) == "table" and eggData.Pets and eggName ~= "Chronos Egg" then
                         table.insert(eggList, eggName)
                     end
                 end
-                
                 table.sort(eggList)
                 return eggList
             end
 
             local function updateDeletePetDropdown(eggName)
                 if not eggName or not Eggs[eggName] or not Eggs[eggName].Pets then
-                    if deleteDropdown then
-                        deleteDropdown:SetValues({})
-                    end
+                    if deleteDropdown then deleteDropdown:SetValues({}) end
                     return
                 end
                 
                 local petList = {}
                 for petName, chance in pairs(Eggs[eggName].Pets) do
-                    local percentage = Eggs.GetChance(eggName, petName)
                     table.insert(petList, {
                         name = petName,
                         chance = chance,
-                        percentage = percentage,
-                        display = string.format("%s - %s%%", petName, tostring(percentage))
+                        display = string.format("%s - %s%%", petName, tostring(Eggs.GetChance(eggName, petName)))
                     })
                 end
                 
-                -- Sort by chance (highest to lowest)
                 table.sort(petList, function(a, b) return a.chance > b.chance end)
                 
-                -- Extract just the display strings
                 local sortedDisplayList = {}
                 for _, pet in ipairs(petList) do
                     table.insert(sortedDisplayList, pet.display)
@@ -742,7 +732,6 @@ for attempt = 1, maxRetries do
                     deleteDropdown:SetValues(sortedDisplayList)
                 end
             end
-
 
             local deleteEggDropdown = AutoDeleteSection:Dropdown("DeleteEggDropdown", {
                 Title = "Select Egg",
@@ -768,8 +757,11 @@ for attempt = 1, maxRetries do
                     if type(value) == "table" then
                         for petDisplay, isSelected in pairs(value) do
                             if isSelected then
-                                local petName = petDisplay:match("^(.-)%s*%-")
+                                -- **THE FIX IS HERE:** Use a greedy match to capture the full name
+                                local petName = petDisplay:match("^(.+)%s*%-")
                                 if petName then
+                                    -- Trim trailing whitespace just in case
+                                    petName = petName:gsub("%s*$", "")
                                     table.insert(selectedDeletePets, petName)
                                 end
                             end
@@ -789,13 +781,7 @@ for attempt = 1, maxRetries do
                         [selectedDeleteEgg] = selectedDeletePets
                     }
                     
-                    local Network = require(ReplicatedStorage.Modules.Network)
-                    local success = pcall(function()
-                        Network:FireServer("AutoDelete", deleteData)
-                    end)
-                    
-                    if success then
-                    end
+                    pcall(Network.FireServer, Network, "AutoDelete", deleteData)
                 end
             })
 
@@ -1720,227 +1706,156 @@ for attempt = 1, maxRetries do
             })
 
             local EnchantSection = Tabs.Enchant:AddSection("Auto Enchant")
-
-            local EnchantData = require(ReplicatedStorage.Game.EnchantData)
-            local Network = require(ReplicatedStorage.Modules.Network)
-
-            local selectedEnchants = {}
-            local selectedPets = {}
-            local enchantPetDropdown = nil
-            local enchantStatusParagraph = nil
-            local autoEnchantEnabled = false
-            local autoEnchantThread = nil
-            local periodicUpdateThread = nil
+            
+            local selectedEnchants, selectedPets = {}, {}
+            local enchantPetDropdown, enchantStatusParagraph = nil, nil
+            local autoEnchantEnabled, autoEnchantThread, periodicUpdateThread = false, nil, nil
             local petDropdownMap = {}
+            local liveEnchantData = {}
+
+            task.spawn(function()
+                repeat task.wait() until Replication.Loaded and Replication.Data and Replication.Data.Pets
+                for petId, petData in pairs(Replication.Data.Pets) do
+                    liveEnchantData[petId] = petData.Enchant or ""
+                end
+                if enchantPetDropdown then
+                    enchantPetDropdown:SetValues(getFormattedPetList())
+                end
+            end)
 
             local function getEnchantNames()
-                local enchantList = {}
-                if EnchantData and EnchantData.Enchants then
-                    for enchantName, _ in pairs(EnchantData.Enchants) do
-                        table.insert(enchantList, enchantName)
-                    end
-                end
-                local nameOrder = { Taps = 1, Gems = 2, Rebirths = 3, Luck = 4 }
-                local tierOrder = { I = 1, II = 2, III = 3 }
+                local EnchantData = require(ReplicatedStorage.Game.EnchantData)
+                local enchantList = {}; if EnchantData and EnchantData.Enchants then for enchantName, _ in pairs(EnchantData.Enchants) do table.insert(enchantList, enchantName) end end
+                local nameOrder = { Taps=1, Gems=2, Rebirths=3, Luck=4 }; local tierOrder = { I=1, II=2, III=3 }
                 table.sort(enchantList, function(a, b)
-                    local nameA, tierA = a:match("^(.-) (I+)$")
-                    local nameB, tierB = b:match("^(.-) (I+)$")
-                    if nameA and not nameB then return true end
-                    if not nameA and nameB then return false end
-                    if nameA and nameB then
-                        local orderA = nameOrder[nameA] or 99
-                        local orderB = nameOrder[nameB] or 99
-                        if orderA ~= orderB then
-                            return orderA < orderB
-                        else
-                            return (tierOrder[tierA] or 99) < (tierOrder[tierB] or 99)
-                        end
-                    end
+                    local nameA,tierA=a:match("^(.-) (I+)$"); local nameB,tierB=b:match("^(.-) (I+)$"); if nameA and not nameB then return true end; if not nameA and nameB then return false end
+                    if nameA and nameB then local oA=nameOrder[nameA] or 99; local oB=nameOrder[nameB] or 99; if oA~=oB then return oA<oB else return(tierOrder[tierA] or 99)<(tierOrder[tierB] or 99) end end
                     return a < b
-                end)
-                return enchantList
+                end); return enchantList
             end
 
             local function getFormattedPetList()
-                repeat task.wait() until Replication.Loaded and Replication.Data and Replication.Data.Pets
-                petDropdownMap = {}
-                local petsToSort = {}
-                for id, petData in pairs(Replication.Data.Pets) do
-                    table.insert(petsToSort, petData)
-                end
-                table.sort(petsToSort, function(a, b)
-                    return (tonumber(a.Multiplier1) or 0) > (tonumber(b.Multiplier1) or 0)
-                end)
-                local formattedList = {}
-                for i, petData in ipairs(petsToSort) do
-                    local formattedMultiplier = formatNumber(tonumber(petData.Multiplier1) or 0)
-                    local petString = string.format("%s (x%s)", petData.Name or "Unknown", formattedMultiplier)
-                    if petData.Enchant and petData.Enchant ~= "" then
-                        petString = petString .. ": " .. petData.Enchant
-                    end
-                    local finalDropdownString = string.format("%d. %s", i, petString)
-                    table.insert(formattedList, finalDropdownString)
-                    petDropdownMap[finalDropdownString] = petData.Id
-                end
-                return formattedList
+                repeat task.wait() until Replication.Loaded and Replication.Data and Replication.Data.Pets; petDropdownMap = {}
+                local petsToSort = {}; for id,petData in pairs(Replication.Data.Pets) do table.insert(petsToSort, petData) end
+                table.sort(petsToSort, function(a, b) return (tonumber(a.Multiplier1) or 0) > (tonumber(b.Multiplier1) or 0) end)
+                local formattedList = {}; for i,petData in ipairs(petsToSort) do
+                    local currentEnchant = liveEnchantData[petData.Id] or petData.Enchant or ""
+                    local petString = string.format("%s (x%s)", petData.Name or "Unknown", formatNumber(tonumber(petData.Multiplier1) or 0))
+                    if currentEnchant ~= "" then petString = petString .. ": " .. currentEnchant end
+                    local finalDropdownString = string.format("%d. %s", i, petString); table.insert(formattedList, finalDropdownString); petDropdownMap[finalDropdownString] = petData.Id
+                end; return formattedList
             end
 
             local function updateEnchantStatus()
-                if not enchantStatusParagraph then return end
-                if autoEnchantEnabled then return end
-
-                local crystalCount = (Replication.Data and Replication.Data.Items and Replication.Data.Items.EnchantCrystal) or 0
-                local content = "Enchant Crystals: " .. tostring(crystalCount) .. "\n\n--- Selected Pets ---\n"
-                local groupedPets = {}
-                local hasSelection = false
-
-                for petString, isSelected in pairs(selectedPets) do
-                    if isSelected then
-                        hasSelection = true
-                        local petId = petDropdownMap[petString]
+                if not enchantStatusParagraph or autoEnchantEnabled then return end
+                local crystalCount = (Replication.Data.Items and Replication.Data.Items.EnchantCrystal) or 0
+                local content = "Enchant Crystals: " .. tostring(crystalCount) .. "\n\n--- Selected Pets ---\n"; local groupedPets={}; local hasSelection=false
+                for petString,isSelected in pairs(selectedPets) do
+                    if isSelected then hasSelection=true; local petId=petDropdownMap[petString]; 
                         if petId and Replication.Data.Pets[petId] then
-                            local currentPetData = Replication.Data.Pets[petId]
-                            local formattedMultiplier = formatNumber(tonumber(currentPetData.Multiplier1) or 0)
-                            local livePetString = string.format("%s (x%s)", currentPetData.Name or "Unknown", formattedMultiplier)
-                            if currentPetData.Enchant and currentPetData.Enchant ~= "" then
-                                livePetString = livePetString .. ": " .. currentPetData.Enchant
-                            end
+                            local petData = Replication.Data.Pets[petId]
+                            local currentEnchant = liveEnchantData[petId] or petData.Enchant or ""
+                            local multiplier = petData.Multiplier1 and formatNumber(tonumber(petData.Multiplier1)) or "0"
+                            local livePetString = string.format("%s (x%s)", petData.Name or "Unknown", multiplier)
+                            if currentEnchant ~= "" then livePetString = livePetString .. ": " .. currentEnchant end
                             groupedPets[livePetString] = (groupedPets[livePetString] or 0) + 1
-                        end
-                    end
-                end
-
-                if not hasSelection then
-                    content = content .. "None"
-                else
-                    for pet, count in pairs(groupedPets) do
-                        if count > 1 then
-                            content = content .. tostring(count) .. "x " .. pet .. "\n"
                         else
-                            content = content .. pet .. "\n"
+                            local strippedString = petString:match("^%d+%. (.+)") or petString
+                            groupedPets[strippedString] = (groupedPets[strippedString] or 0) + 1
                         end
                     end
                 end
+                if not hasSelection then content = content .. "None" else for pet,count in pairs(groupedPets) do content = content .. (count > 1 and tostring(count) .. "x " or "") .. pet .. "\n" end end
                 enchantStatusParagraph:SetContent(content)
             end
 
-            EnchantSection:Dropdown("SelectEnchantsDropdown", {
-                Title = "Select Desired Enchant(s)",
-                Values = getEnchantNames(),
-                Multi = true,
-                Searchable = true,
-                Default = {},
-                Callback = function(value)
-                    selectedEnchants = value
-                end
-            })
-
-            enchantPetDropdown = EnchantSection:Dropdown("SelectPetsDropdown", {
-                Title = "Select Pet(s) to Enchant",
-                Values = getFormattedPetList(),
-                Multi = true,
-                Searchable = true,
-                Default = {},
-                Callback = function(value)
-                    selectedPets = value
-                    updateEnchantStatus()
-                end
-            })
-
-            EnchantSection:AddButton({
-                Title = "Refresh Pets",
-                Callback = function()
-                    if enchantPetDropdown then
-                        local currentSelection = selectedPets
-                        enchantPetDropdown:SetValues(getFormattedPetList())
-                        enchantPetDropdown:SetValue(currentSelection)
-                    end
-                end
-            })
+            EnchantSection:Dropdown("SelectEnchantsDropdown", { Title="Select Desired Enchant(s)", Values=getEnchantNames(), Multi=true, Searchable=true, Default={}, Callback=function(v) selectedEnchants=v end })
+            enchantPetDropdown = EnchantSection:Dropdown("SelectPetsDropdown", { Title="Select Pet(s) to Enchant", Values=getFormattedPetList(), Multi=true, Searchable=true, Default={}, Callback=function(v) selectedPets=v;updateEnchantStatus() end })
+            EnchantSection:AddButton({ Title="Refresh Pets", Callback=function() if enchantPetDropdown then enchantPetDropdown:SetValues(getFormattedPetList()); enchantPetDropdown:SetValue({}); selectedPets={}; updateEnchantStatus() end end })
 
             local AutoEnchantToggle = EnchantSection:AddToggle("AutoEnchantToggle", {
-                Title = "Auto Enchant",
-                Default = false,
-                Callback = function(Value)
-                    autoEnchantEnabled = Value
-
-                    if periodicUpdateThread then
-                        task.cancel(periodicUpdateThread)
-                        periodicUpdateThread = nil
-                    end
-                    if autoEnchantThread then
-                        task.cancel(autoEnchantThread)
-                        autoEnchantThread = nil
-                    end
-
+                Title="Auto Enchant", Default=false,
+                Callback=function(Value)
+                    autoEnchantEnabled=Value; if periodicUpdateThread then task.cancel(periodicUpdateThread);periodicUpdateThread=nil end; if autoEnchantThread then task.cancel(autoEnchantThread);autoEnchantThread=nil end
                     if Value then
-                        if not next(selectedPets) or not next(selectedEnchants) then
-                            autoEnchantEnabled = false
-                            task.spawn(function() task.wait(); AutoEnchantToggle:SetValue(false) end)
-                            return
-                        end
-
+                        if not next(selectedPets) or not next(selectedEnchants) then autoEnchantEnabled=false;task.spawn(function() task.wait(); end);return end
+                        
                         autoEnchantThread = task.spawn(function()
+                            local original_InvokeServer = Network.InvokeServer
+                            
                             while autoEnchantEnabled do
-                                local petsToEnchant = {}
+                                local targetPet = nil
                                 for petString, isSelected in pairs(selectedPets) do
                                     if isSelected then
                                         local petId = petDropdownMap[petString]
-                                        if petId and Replication.Data.Pets[petId] then
-                                            local currentEnchant = Replication.Data.Pets[petId].Enchant or ""
+                                        if petId and liveEnchantData[petId] then
+                                            local currentEnchant = liveEnchantData[petId]
                                             if not selectedEnchants[currentEnchant] then
-                                                table.insert(petsToEnchant, {id = petId, name = Replication.Data.Pets[petId].Name})
+                                                targetPet = {id = petId, name = Replication.Data.Pets[petId].Name}
+                                                break
                                             end
                                         end
                                     end
                                 end
 
                                 local crystalCount = (Replication.Data.Items and Replication.Data.Items.EnchantCrystal) or 0
-                                if #petsToEnchant == 0 then
+                                if not targetPet then
                                     enchantStatusParagraph:SetContent("Enchant Crystals: " .. crystalCount .. "\n\nAll selected pets have a desired enchant!")
                                     task.wait(3)
                                 else
-                                    local targetPet = petsToEnchant[1]
-                                    enchantStatusParagraph:SetContent("Enchant Crystals: " .. crystalCount .. "\n\nAttempting to enchant: " .. targetPet.name)
-                                    
                                     if crystalCount > 0 then
-                                        pcall(Network.InvokeServer, Network, "EnchantPet", targetPet.id)
+                                        local currentTargetId = targetPet.id
+                                        local lastEnchantResult = nil
+                                        
+                                        enchantStatusParagraph:SetContent("Enchant Crystals: " .. crystalCount .. "\n\nAttempting to enchant: " .. targetPet.name)
+
+                                        Network.InvokeServer = function(self, eventName, ...)
+                                            local result = original_InvokeServer(self, eventName, ...)
+                                            if eventName == "EnchantPet" and select(1, ...) == currentTargetId then
+                                                lastEnchantResult = result
+                                                liveEnchantData[currentTargetId] = result
+                                                
+                                                Replication.Data.Pets[currentTargetId].Enchant = result
+
+                                                Network.InvokeServer = original_InvokeServer
+                                            end
+                                            return result
+                                        end
+
+                                        pcall(Network.InvokeServer, Network, "EnchantPet", currentTargetId)
+                                        
+                                        local timeout = 0
+                                        repeat task.wait(0.2) timeout = timeout + 0.2 until lastEnchantResult ~= nil or timeout >= 5
+                                        
+                                        Network.InvokeServer = original_InvokeServer
+                                        
+                                        if not lastEnchantResult then
+                                            enchantStatusParagraph:SetContent("Enchant Crystals: " .. crystalCount .. "\n\nHook timed out for: " .. targetPet.name .. ". Retrying.")
+                                            task.wait(3)
+                                        end
+                                        
+                                        local EnchantModule = require(LocalPlayer.PlayerScripts.Modules.Menus.Enchant)
+                                        if EnchantModule and EnchantModule.selectPet then
+                                            pcall(EnchantModule.selectPet, currentTargetId)
+                                        end
                                     else
                                         enchantStatusParagraph:SetContent("Out of Enchant Crystals! Stopping.")
-                                        task.spawn(function() task.wait(); AutoEnchantToggle:SetValue(false) end)
-                                        break
                                     end
                                 end
                                 task.wait(1)
                             end
+                            Network.InvokeServer = original_InvokeServer
                         end)
-                    else
-                        periodicUpdateThread = task.spawn(function()
-                            while not autoEnchantEnabled do
-                                updateEnchantStatus()
-                                task.wait(5)
-                            end
-                        end)
+                    else 
+                        periodicUpdateThread=task.spawn(function() while not autoEnchantEnabled do updateEnchantStatus();task.wait(5) end end) 
                     end
                 end
             })
+            
+            enchantStatusParagraph = EnchantSection:AddParagraph("EnchantStatus", { Title="Status", Content="Loading..." })
 
-            enchantStatusParagraph = EnchantSection:AddParagraph("EnchantStatus", {
-                Title = "Status",
-                Content = "Loading..."
-            })
-
-            task.spawn(function()
-                repeat task.wait() until Replication.Loaded and Replication.Data
-                updateEnchantStatus()
-            end)
-
-            Replication:Connect("Items", function()
-                if not autoEnchantEnabled then
-                    updateEnchantStatus()
-                end
-            end)
-
+            task.spawn(function() repeat task.wait() until Replication.Loaded and Replication.Data; updateEnchantStatus() end)
+            Replication:Connect("Items", function() if not autoEnchantEnabled then updateEnchantStatus() end end)
 
             local UnlockAll = Tabs.Misc:AddSection("Unlock All Zones")
 
@@ -2498,6 +2413,10 @@ for attempt = 1, maxRetries do
                         AutoEquipCalculatedBestToggle:SetValue(false)
                     end
                     
+                    if value and autoEquipLowestLevelEnabled then
+                        AutoEquipLowestLevelToggle:SetValue(false)
+                    end
+
                     if autoEquipBestThread then
                         task.cancel(autoEquipBestThread)
                         autoEquipBestThread = nil
@@ -2556,10 +2475,13 @@ for attempt = 1, maxRetries do
             Callback = function(Value)
                 autoEquipCalculatedBestEnabled = Value
                 
-                -- Turn off the other toggles if this one is being enabled
-                if Value then
-                    if autoEquipBestEnabled then AutoEquipBestToggle:SetValue(false) end
-                    if autoEquipLowestLevelEnabled then AutoEquipLowestLevelToggle:SetValue(false) end
+                -- Turn off the other toggle if this one is being enabled
+                if Value and autoEquipBestEnabled then
+                    AutoEquipBestToggle:SetValue(false)
+                end
+
+                if Value and autoEquipLowestLevelEnabled then
+                    AutoEquipLowestLevelToggle:SetValue(false)
                 end
                 
                 if autoEquipCalculatedBestThread then
@@ -2574,74 +2496,120 @@ for attempt = 1, maxRetries do
                         local SignalModule = require(ReplicatedStorage.Modules.Signal)
                         local PetStatsTiers = require(ReplicatedStorage.Game.PetStats.Tiers)
                         
+                        -- Constants
+                        local MAX_LEVEL = 75
                         local LEVEL_FORMULA_DIVISOR = 199
                         
                         -- Get tier multiplier from the game's Tiers module
                         local function getTierMultiplier(tier)
-                            if not tier or tier == "Normal" then return 1 end
+                            if not tier or tier == "Normal" then
+                                return 1
+                            end
+                            
                             if PetStatsTiers[tier] and PetStatsTiers[tier][1] then
                                 return PetStatsTiers[tier][1]
                             end
+                            
                             return 1
                         end
                         
-                        local function getBaseByTierMultiplier(petData)
-                            local currentMultiplier = tonumber(petData.Multiplier1) or 0
-                            local currentLevel = petData.Level or 1
-                            local tier = petData.Tier or "Normal"
-
-                            local tierMultiplier = getTierMultiplier(tier)
+                        -- Calculate max level stats
+                        local function getMaxLevelStats(currentMultiplier, currentLevel, tierMultiplier)
                             local levelMultiplier = (1 + currentLevel / LEVEL_FORMULA_DIVISOR)
-
-                            local trueBase = 0
-                            if tierMultiplier > 0 and levelMultiplier > 0 then
-                                trueBase = currentMultiplier / (tierMultiplier * levelMultiplier)
-                            end
-
-                            return trueBase * tierMultiplier
+                            local trueBase = currentMultiplier / (tierMultiplier * levelMultiplier)
+                            local maxLevelMultiplier = (1 + MAX_LEVEL / LEVEL_FORMULA_DIVISOR)
+                            return trueBase * tierMultiplier * maxLevelMultiplier
                         end
                         
                         while autoEquipCalculatedBestEnabled do
                             pcall(function()
+                                -- Wait for data to be ready
                                 repeat task.wait() until ReplicationModule.Loaded and ReplicationModule.Data
+                                
+                                -- Get max equipped pets limit
                                 local MAX_EQUIPPED_PETS = ReplicationModule.Data.EquipLimit or 5
                                 
+                                -- Calculate max stats for all pets
                                 local petList = {}
                                 
                                 for petId, petData in pairs(ReplicationModule.Data.Pets) do
-                                    local baseByTierStat = getBaseByTierMultiplier(petData)
+                                    local tier = petData.Tier or "Normal"
+                                    local tierMultiplier = getTierMultiplier(tier)
+                                    local currentLevel = petData.Level or 1
+                                    local currentMultiplier = petData.Multiplier1 or 0
+                                    
+                                    local maxStats = getMaxLevelStats(currentMultiplier, currentLevel, tierMultiplier)
                                     
                                     table.insert(petList, {
                                         id = petId,
-                                        baseByTierStat = baseByTierStat 
+                                        name = petData.Name or "Unknown",
+                                        maxStats = maxStats,
+                                        currentMultiplier = currentMultiplier,
+                                        currentLevel = currentLevel,
+                                        tier = tier,
+                                        equipped = petData.Equipped or false
                                     })
                                 end
-
+                                
+                                -- Sort by max stats first, then by current multiplier, then by current level
                                 table.sort(petList, function(a, b)
-                                    return a.baseByTierStat > b.baseByTierStat
+                                    -- Compare max stats with a very small tolerance
+                                    local maxDiff = math.abs(a.maxStats - b.maxStats)
+                                    
+                                    if maxDiff < 1 then  -- If max stats are essentially the same
+                                        -- Prioritize higher current multiplier
+                                        if math.abs(a.currentMultiplier - b.currentMultiplier) > 0.01 then
+                                            return a.currentMultiplier > b.currentMultiplier
+                                        end
+                                        -- If current multipliers are also the same, prioritize higher level
+                                        return a.currentLevel > b.currentLevel
+                                    end
+                                    
+                                    return a.maxStats > b.maxStats
                                 end)
                                 
+                                
+                                -- Get top pets based on EquipLimit
                                 local bestPetIds = {}
                                 for i = 1, math.min(MAX_EQUIPPED_PETS, #petList) do
                                     bestPetIds[petList[i].id] = true
                                 end
                                 
+                                -- Get current pet data
                                 local petDataTable = ReplicationModule.Data.Pets
-            
+                                
+                                -- First pass: Unequip pets that shouldn't be equipped
                                 for petId, petData in pairs(petDataTable) do
-                                    if petData.Equipped and not bestPetIds[petId] then
-                                        pcall(NetworkModule.InvokeServer, NetworkModule, "Unequip", petId)
+                                    local shouldBeEquipped = bestPetIds[petId]
+                                    
+                                    if petData.Equipped and not shouldBeEquipped then
+                                        -- Send network request to unequip
+                                        pcall(function()
+                                            NetworkModule:InvokeServer("Unequip", petId)
+                                        end)
+                                        
+                                        -- Update UI
                                         SignalModule.Fire("UnequipPetUI", petId)
+                                        
                                         task.wait(0.1)
                                     end
                                 end
                                 
                                 task.wait(0.5)
                                 
+                                -- Second pass: Equip pets that should be equipped
                                 for petId, petData in pairs(petDataTable) do
-                                    if not petData.Equipped and bestPetIds[petId] then
-                                        pcall(NetworkModule.InvokeServer, NetworkModule, "Equip", petId)
+                                    local shouldBeEquipped = bestPetIds[petId]
+                                    
+                                    if not petData.Equipped and shouldBeEquipped then
+                                        -- Send network request to equip
+                                        pcall(function()
+                                            NetworkModule:InvokeServer("Equip", petId)
+                                        end)
+                                        
+                                        -- Update UI
                                         SignalModule.Fire("EquipPetUI", petId)
+                                        
                                         task.wait(0.1)
                                     end
                                 end
@@ -2887,7 +2855,7 @@ for attempt = 1, maxRetries do
                             for i = 1, math.min(deleteWeakestAmount, #allPets) do
                                 local pet = allPets[i]
                                 pcall(function()
-                                    Network:InvokeServer("DeletePet", pet.id)
+                                    Network:InvokeServer("DeletePet", pet.Id)
                                 end)
                                 deletedCount = deletedCount + 1
                                 task.wait(0.25)
