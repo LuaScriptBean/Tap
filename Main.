@@ -2605,7 +2605,6 @@ for attempt = 1, maxRetries do
                                 end
                                 
                                 local petDataTable = ReplicationModule.Data.Pets
-                            
                                 for petId, petData in pairs(petDataTable) do
                                     if petData.Equipped and not bestPetIds[petId] then
                                         pcall(NetworkModule.InvokeServer, NetworkModule, "Unequip", petId)
