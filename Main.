@@ -188,20 +188,42 @@ for attempt = 1, maxRetries do
             local AutoClickSection = Tabs.Main:AddSection("Auto Click")
 
             local autoClickEnabled = false
+
             AutoClickSection:AddToggle("AutoClick", {
                 Title = "Auto Click (OP)",
                 Default = false,
                 Callback = function(Value)
                     autoClickEnabled = Value
-                    if Value then
-                        task.spawn(function()
-                            local Network = require(ReplicatedStorage.Modules.Network)
-                            while autoClickEnabled do
+                    if not Value then return end
+
+                    task.spawn(function()
+                        local Network = require(ReplicatedStorage.Modules.Network)
+
+                        local function getButton()
+                            return LocalPlayer.PlayerGui
+                                and LocalPlayer.PlayerGui:FindFirstChild("Game")
+                                and LocalPlayer.PlayerGui.Game.Bottom.Tap:FindFirstChild("Button")
+                        end
+
+                        while autoClickEnabled do
+                            -- Server tap
+                            pcall(function()
                                 Network:FireServer("Tap", true)
-                                task.wait()
+                            end)
+
+                            -- UI tap
+                            local button = getButton()
+                            if button then
+                                pcall(function()
+                                    for _, c in pairs(getconnections(button.MouseButton1Down)) do
+                                        c:Fire()
+                                    end
+                                end)
                             end
-                        end)
-                    end
+
+                            task.wait()
+                        end
+                    end)
                 end
             })
 
@@ -2605,6 +2627,7 @@ for attempt = 1, maxRetries do
                                 end
                                 
                                 local petDataTable = ReplicationModule.Data.Pets
+            
                                 for petId, petData in pairs(petDataTable) do
                                     if petData.Equipped and not bestPetIds[petId] then
                                         pcall(NetworkModule.InvokeServer, NetworkModule, "Unequip", petId)
