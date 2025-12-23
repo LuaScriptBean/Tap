@@ -2814,7 +2814,7 @@ for attempt = 1, maxRetries do
                                 
                                 if deleteClicksThreshold > 0 then
                                     for _, pet in ipairs(allPets) do
-                                        if autoDeleteUnderThresholdEnabled and (tonumber(pet.Multiplier1) or 0) < deleteClicksThreshold then
+                                        if autoDeleteUnderThresholdEnabled and (tonumber(pet.Multiplier1) or 10000000000000000000000000000000) < deleteClicksThreshold then
                                             pcall(Network.InvokeServer, Network, "DeletePet", pet.Id)
                                             task.wait(0.25)
                                         end
